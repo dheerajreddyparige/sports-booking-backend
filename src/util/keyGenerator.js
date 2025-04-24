@@ -49,7 +49,23 @@ PRIVATE_KEY="${keyPair.privateKey}"
 ************* COPY PUBLIC KEY BELOW *************
 ${keyPair.publicKey}
 ************* COPY PUBLIC KEY ABOVE *************
-`);
+
+Please add your public key to your account. For more details visit: https://developers.facebook.com/docs/whatsapp/flows/guides/implementingyourflowendpoint#upload_public_key`);
+
+  // Save keys to files
+  try {
+    const keysDir = path.join(__dirname, '..', 'keys');
+    if (!fs.existsSync(keysDir)) {
+      fs.mkdirSync(keysDir, { recursive: true });
+    }
+    
+    fs.writeFileSync(path.join(keysDir, 'public.pem'), keyPair.publicKey);
+    fs.writeFileSync(path.join(keysDir, 'private.pem'), keyPair.privateKey);
+    
+    console.log(`\nKeys also saved to files:\nPublic key: ${path.join(keysDir, 'public.pem')}\nPrivate key: ${path.join(keysDir, 'private.pem')}`);
+  } catch (error) {
+    console.error('Error saving keys to files:', error);
+  }
 } catch (err) {
   console.error("Error while creating public private key pair:", err);
 }

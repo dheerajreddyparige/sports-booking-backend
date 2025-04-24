@@ -5,9 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import crypto from "crypto";
+const crypto = require('crypto');
 
-export const decryptRequest = (body, privatePem, passphrase) => {
+const decryptRequest = (body, privatePem, passphrase) => {
   const { encrypted_aes_key, encrypted_flow_data, initial_vector } = body;
 
   const privateKey = crypto.createPrivateKey({ key: privatePem, passphrase });
@@ -61,7 +61,7 @@ export const decryptRequest = (body, privatePem, passphrase) => {
   };
 };
 
-export const encryptResponse = (
+const encryptResponse = (
   response,
   aesKeyBuffer,
   initialVectorBuffer
@@ -85,7 +85,7 @@ export const encryptResponse = (
   ]).toString("base64");
 };
 
-export const FlowEndpointException = class FlowEndpointException extends Error {
+const FlowEndpointException = class FlowEndpointException extends Error {
   constructor (statusCode, message) {
     super(message)
 
@@ -93,3 +93,9 @@ export const FlowEndpointException = class FlowEndpointException extends Error {
     this.statusCode = statusCode;
   }
 }
+
+module.exports = {
+  decryptRequest,
+  encryptResponse,
+  FlowEndpointException
+};

@@ -5,6 +5,20 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+// Helper functions for date formatting
+function getFormattedDate(daysFromNow) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysFromNow);
+  return date.toISOString().split('T')[0]; // YYYY-MM-DD format
+}
+
+function getFormattedDateTitle(daysFromNow) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysFromNow);
+  const options = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
+  return date.toLocaleDateString('en-US', options);
+}
+
 // this object is generated from Flow Builder under "..." > Endpoint > Snippets > Responses
 const SCREEN_RESPONSES = {
   APPOINTMENT: {
@@ -135,8 +149,7 @@ const SCREEN_RESPONSES = {
     },
   },
 };
-
-export const getNextScreen = async (decryptedBody) => {
+const getNextScreen = async (decryptedBody) => {
   const { screen, data, version, action, flow_token } = decryptedBody;
   // handle health check request
   if (action === "ping") {
@@ -253,4 +266,8 @@ Phone: ${data.phone}
   throw new Error(
     "Unhandled endpoint request. Make sure you handle the request action & screen logged above."
   );
+};
+
+module.exports = {
+  getNextScreen
 };
