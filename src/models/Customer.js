@@ -1,13 +1,12 @@
-// src/models/User.js
 import mongoose from "mongoose";
 
-const userSchema = new mongoose.Schema({
-  userId: { type: String, required: true, unique: true }, // Unique ID (e.g., WhatsApp ID)
+const customerSchema = new mongoose.Schema({
+  customerId: { type: String, required: true, unique: true },
   name: { type: String, required: true },
   email: { type: String },
   phone: { type: String, required: true },
-  whatsappId: { type: String, required: true }, // For WhatsApp Flows
+  whatsappId: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
 });
 
-export default mongoose.model("User", userSchema);
+export default mongoose.model("Customer", customerSchema);

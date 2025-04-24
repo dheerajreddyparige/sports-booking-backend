@@ -1,4 +1,3 @@
-// src/utils/slotUtils.js
 import Booking from "../models/Booking.js";
 import Court from "../models/Court.js";
 import FlowsState from "../models/FlowsState.js";
@@ -9,16 +8,25 @@ const timeToMinutes = (time) => {
 };
 
 const getAvailableSlots = async (sport, date, duration) => {
+  if (!["badminton", "cricket", "pickleball"].includes(sport)) {
+    throw new Error("Invalid sport");
+  }
+  if (!date || !duration) {
+    throw new Error("Date and duration are required");
+  }
+
   const durationHours = parseFloat(duration.replace("hr", ""));
   const durationMinutes = durationHours * 60;
 
-  // Fetch bookings and courts
   const bookings = await Booking.find({
     sport,
     date: new Date(date),
     status: { $ne: "cancelled" },
   });
   const courts = await Court.find({ sport, isActive: true });
+  if (!courts.length) {
+    throw new Error(`No active courts for ${sport}`);
+  }
 
   const slots = [];
   for (let hour = 0; hour < 24; hour++) {
@@ -36,7 +44,6 @@ const getAvailableSlots = async (sport, date, duration) => {
       }, {});
 
       if (sport === "badminton") {
-        // At least one court must be free
         isAvailable = courts.some((court) => {
           const courtId = court.courtId;
           const bookings = courtBookings[courtId] || [];
@@ -49,7 +56,6 @@ const getAvailableSlots = async (sport, date, duration) => {
           });
         });
       } else {
-        // Single court must be free
         const courtId = courts[0]?.courtId || 1;
         const bookings = courtBookings[courtId] || [];
         isAvailable = !bookings.some((booking) => {
@@ -73,6 +79,9 @@ const getAvailableSlots = async (sport, date, duration) => {
 };
 
 const saveFlowState = async (flowToken, screen, data) => {
+  if (!flowToken) {
+    throw new Error("Flow token is required");
+  }
   await FlowsState.findOneAndUpdate(
     { flowToken },
     { screen, data, updatedAt: new Date() },
@@ -81,6 +90,9 @@ const saveFlowState = async (flowToken, screen, data) => {
 };
 
 const getFlowState = async (flowToken) => {
+  if (!flowToken) {
+    return { screen: "APPOINTMENT", data: {} };
+  }
   const state = await FlowsState.findOne({ flowToken });
   return state || { screen: "APPOINTMENT", data: {} };
 };

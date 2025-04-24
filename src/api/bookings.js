@@ -1,37 +1,41 @@
-const express = require('express');
+import express from "express";
+import Booking from "../models/Booking.js";
+import { createRazorpayOrder } from "../utils/razorpay.js";
+import { getAvailableSlots } from "../utils/slotUtils.js";
+
 const router = express.Router();
-const Booking = require('../models/Booking');
 
-router.post('/', async (req, res) => {
-  const { sport, time_slot, name, phone, email, price } = req.body;
-
-  // Server-side validation
-  if (!sport || !['badminton', 'cricket'].includes(sport)) {
-    return res.status(400).json({ error: 'Invalid sport' });
-  }
-  if (!time_slot) {
-    return res.status(400).json({ error: 'Invalid time slot' });
-  }
-  if (!name || name.length < 2 || name.length > 50) {
-    return res.status(400).json({ error: 'Name must be 2-50 characters' });
-  }
-  if (!phone || !/^[0-9]{10}$/.test(phone)) {
-    return res.status(400).json({ error: 'Phone must be 10 digits' });
-  }
-  if (!email || !/.+\@.+\..+/.test(email)) {
-    return res.status(400).json({ error: 'Invalid email' });
-  }
-  if (!price || ![400, 600].includes(Number(price))) {
-    return res.status(400).json({ error: 'Invalid price' });
-  }
-
+router.post("/create", async (req, res) => {
   try {
-    const booking = new Booking({ sport, time_slot, name, phone, email, price });
+    const booking = new Booking(req.body);
     await booking.save();
-    res.json({ message: 'Booking saved', booking_id: booking._id });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to save booking' });
+    const order = await createRazorpayOrder(booking._id, booking.duration * 1000);
+    res.json({ booking, order });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
-module.exports = router;
+router.get("/", async (req, res) => {
+  try {
+    const bookings = await Booking.find();
+    res.json(bookings);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/slots", async (req, res) => {
+  try {
+    const { sport, date, duration } = req.query;
+    if (!sport || !date || !duration) {
+      return res.status(400).json({ error: "Missing required parameters" });
+    }
+    const slots = await getAvailableSlots(sport, date, duration);
+    res.json({ slots });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+export default router;

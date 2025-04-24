@@ -1,16 +1,17 @@
-// src/models/Booking.js
 import mongoose from "mongoose";
 
 const bookingSchema = new mongoose.Schema({
   sport: { type: String, required: true, enum: ["badminton", "cricket", "pickleball"] },
-  courtId: { type: Number, required: true }, // 1-5 for Badminton, 1 for Cricket/Pickleball
+  courtId: { type: Number, required: true },
   date: { type: Date, required: true },
-  startTime: { type: String, required: true }, // e.g., "10:30"
-  endTime: { type: String, required: true }, // e.g., "12:30"
-  duration: { type: Number, required: true }, // Duration in hours (e.g., 2)
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  startTime: { type: String, required: true },
+  endTime: { type: String, required: true },
+  duration: { type: Number, required: true },
+  customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
   status: { type: String, enum: ["confirmed", "pending", "cancelled"], default: "pending" },
   createdAt: { type: Date, default: Date.now },
 });
+
+bookingSchema.index({ sport: 1, date: 1, courtId: 1 });
 
 export default mongoose.model("Booking", bookingSchema);
