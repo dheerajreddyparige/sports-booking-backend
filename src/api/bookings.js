@@ -4,7 +4,7 @@ const Booking = require('../models/Booking');
 
 router.post('/', async (req, res) => {
   const { sport, time_slot, name, phone, email, price } = req.body;
-debugger
+
   // Server-side validation
   if (!sport || !['badminton', 'cricket'].includes(sport)) {
     return res.status(400).json({ error: 'Invalid sport' });
