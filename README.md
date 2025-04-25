@@ -49,11 +49,19 @@ This will generate a public/private key pair in the `src/keys` directory. Upload
 
 1. Create a new Flow in the WhatsApp Business Platform
 2. Set up the Flow with the following screens:
-   - APPOINTMENT: For selecting sport, location, date, and time
-   - DETAILS: For collecting user information
-   - CONFIRMATION: To confirm booking details
-   - SUMMARY: To display booking confirmation
+   - BOOKING: For selecting sport, date, duration, and time slots
+   - SUMMARY: For collecting user information and displaying booking details
+   - SUCCESS: To display booking confirmation and invoice
 3. Configure the Flow endpoint to point to your server's URL
+4. The flow follows the PITZONE Booking structure with the following features:
+   - Sports selection (Badminton, Cricket, Pickleball)
+   - Date selection
+   - Duration selection with automatic discounts
+   - Time slot selection
+   - User information collection
+   - Terms and cancellation policy acceptance
+   - Payment integration with Razorpay
+   - Booking confirmation with invoice
 
 ## API Endpoints
 

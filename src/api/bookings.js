@@ -1,7 +1,6 @@
-import express from "express";
-import Booking from "../models/Booking.js";
-import { createRazorpayOrder } from "../utils/razorpay.js";
-import { getAvailableSlots } from "../utils/slotUtils.js";
+const express = require("express");
+const Booking = require("../models/Booking.js");
+const { getAvailableSlots } = require("../utils/slotUtils.js");
 
 const router = express.Router();
 
@@ -38,4 +37,4 @@ router.get("/slots", async (req, res) => {
   }
 });
 
-export default router;
+module.exports = router;

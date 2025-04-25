@@ -9,4 +9,5 @@ const courtSchema = new mongoose.Schema({
 
 courtSchema.index({ sport: 1, courtId: 1 });
 
+
 export default mongoose.model("Court", courtSchema);

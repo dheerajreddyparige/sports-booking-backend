@@ -4,7 +4,7 @@ const flowDbUtils = require('../flowDbUtils');
 const Booking = require('../../models/Booking');
 const Court = require('../../models/Court');
 const FlowsState = require('../../models/FlowsState');
-
+require('dotenv').config();
 /**
  * Demonstrates how to use the MongoDB models and functions
  * for the sports booking system

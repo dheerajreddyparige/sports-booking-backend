@@ -2,7 +2,7 @@
 const connectToDatabase = require('./connect-to-database');
 const FlowsState = require('../models/FlowsState');
 const Booking = require('../models/Booking');
-const Court = require('../models/Court');
+const Court = require('../models/Court').default;
 
 /**
  * Save or update flow state during WhatsApp interaction
@@ -114,7 +114,9 @@ async function getAvailableDates() {
  * @param {string} sport - Sport type (badminton, cricket, etc.)
  * @param {string} date - Date in YYYY-MM-DD format
  */
-async function getAvailableTimeSlots(sport, date) {
+async function getAvailableTimeSlots(sport, date, duration) {
+  // Convert duration from hours to minutes
+  const durationMinutes = Math.floor(parseFloat(duration) * 60);
   await connectToDatabase();
   
   try {
@@ -144,11 +146,24 @@ async function getAvailableTimeSlots(sport, date) {
     // Mark slots as unavailable if all courts are booked
     defaultSlots.forEach(slot => {
       const slotTime = slot.id;
+      const endTime = new Date(`1970-01-01T${slotTime}:00`);
+      endTime.setMinutes(endTime.getMinutes() + durationMinutes);
+      const endTimeStr = `${endTime.getHours().toString().padStart(2, '0')}:${endTime.getMinutes().toString().padStart(2, '0')}`;
+    
       const allCourtsBooked = courts.every(court => {
         return bookings.some(booking => {
-          return booking.courtId === court.courtId && 
-                 booking.startTime <= slotTime && 
-                 booking.endTime > slotTime;
+          const bookingStart = booking.startTime;
+          const bookingEnd = booking.endTime;
+          
+          // Check if the slot overlaps with any booking
+          return (
+            booking.courtId === court.courtId &&
+            (
+              (slotTime >= bookingStart && slotTime < bookingEnd) ||
+              (endTimeStr > bookingStart && endTimeStr <= bookingEnd) ||
+              (slotTime <= bookingStart && endTimeStr >= bookingEnd)
+            )
+          );
         });
       });
       
@@ -177,41 +192,74 @@ async function getAvailableTimeSlots(sport, date) {
  * Create a booking from flow state data
  * @param {Object} flowState - Flow state with booking details
  */
+async function get_time_slots(params) {
+  const { sport, date, duration } = params;
+  const slots = await getAvailableTimeSlots(sport, date, duration);
+  
+  // Format for WhatsApp Flows ChipsSelector
+  return slots
+    .filter(slot => slot.enabled)
+    .map(slot => ({
+      id: `${slot.id}-${duration}`,
+      title: `${slot.id} - ${duration} hours`
+    }));
+}
+
 async function createBookingFromFlow(flowState) {
   await connectToDatabase();
   
   try {
-    // Extract sport and courtId from the combined ID (e.g., "badminton-1")
-    const [sport, courtIdStr] = flowState.sport.split('-');
-    const courtId = parseInt(courtIdStr, 10);
+    // Validate required fields
+    if (!flowState.sport || !flowState.time_slots || !flowState.date || !flowState.duration) {
+      throw new Error('Missing required booking fields: sport, time_slots, date, or duration');
+    }
     
-    // Calculate end time (assuming 1-hour slots)
-    const startTime = flowState.time;
-    const [startHour, startMinute] = startTime.split(':').map(Number);
-    const endHour = startHour + 1;
-    const endTime = `${endHour.toString().padStart(2, '0')}:${startMinute.toString().padStart(2, '0')}`;
+    // Extract sport (no longer combined with courtId in new structure)
+    const sport = flowState.sport;
+    
+    // Find an available court for this sport
+    const courts = await Court.find({ sport, isActive: true });
+    if (!courts || courts.length === 0) {
+      throw new Error(`No available courts found for sport: ${sport}`);
+    }
+    const courtId = courts[0].courtId; // Use the first available court
+    
+    // Parse time slot (format: "10:00-11:30")
+    const timeSlotParts = flowState.time_slots.split('-');
+    const startTime = timeSlotParts[0];
+    const endTime = timeSlotParts[1];
+    
+    // Alternative calculation if time_slots doesn't contain end time
+    // const startTime = flowState.time_slots;
+    // const [startHour, startMinute] = startTime.split(':').map(Number);
+    // const durationHours = parseFloat(flowState.duration);
+    // const endHourDecimal = startHour + durationHours;
+    // const endHour = Math.floor(endHourDecimal);
+    // const endMinute = startMinute + ((endHourDecimal - endHour) * 60);
+    // const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
     
     // Create a new booking
     const booking = new Booking({
+      userId: flowState.userId || 'guest',
       sport,
       courtId,
       date: new Date(flowState.date),
       startTime,
       endTime,
-      duration: 1, // 1 hour
-      userId: flowState.flowToken, // Temporary user ID
+      duration: parseFloat(flowState.duration),
+      amount: parseFloat(flowState.total_amount || 0),
+      customerName: flowState.name || 'Guest',
+      customerEmail: flowState.email || '',
+      customerPhone: flowState.phone || '',
+      specialRequirements: '',
       status: 'confirmed',
-      createdAt: new Date()
+      paymentStatus: 'paid',
+      paymentMethod: 'razorpay',
+      createdAt: new Date(),
+      updatedAt: new Date()
     });
     
     await booking.save();
-    
-    // Update flow state with booking confirmation
-    await FlowsState.findOneAndUpdate(
-      { flowToken: flowState.flowToken },
-      { status: 'confirmed' }
-    );
-    
     return booking;
   } catch (error) {
     console.error('Error creating booking from flow:', error);

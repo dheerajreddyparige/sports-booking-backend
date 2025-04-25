@@ -1,9 +1,10 @@
 // src/util/scripts/initDb.js
+require('dotenv').config();
 const mongoose = require('mongoose');
 const connectToDatabase = require('../connect-to-database');
 
 // Import models
-const Court = require('../../models/Court');
+const Court = require('../../models/Court').default;
 
 /**
  * Initialize database with sample courts data

@@ -7,6 +7,7 @@
 
 const flowDbUtils = require('./flowDbUtils');
 const connectToDatabase = require('./connect-to-database');
+const WHATSAPP_FLOW = require('../config/whatsappFlow');
 
 // Helper functions for date formatting
 function getFormattedDate(daysFromNow) {
@@ -22,307 +23,222 @@ function getFormattedDateTitle(daysFromNow) {
   return date.toLocaleDateString('en-US', options);
 }
 
-// this object is generated from Flow Builder under "..." > Endpoint > Snippets > Responses
+// Screen responses based on WhatsApp Flow configuration
 const SCREEN_RESPONSES = {
-  APPOINTMENT: {
-    screen: "APPOINTMENT",
+  BOOKING: {
+    screen: "BOOKING",
     data: {
-      department: [
-        {
-          id: "badminton",
-          title: "Badminton",
-        },
-        {
-          id: "cricket",
-          title: "Cricket",
-        },
-        {
-          id: "pickleball",
-          title: "Pickleball",
-        },
-      ],
-      location: [
-        {
-          id: "badminton-1",
-          title: "Badminton Court 1",
-        },
-        {
-          id: "badminton-2",
-          title: "Badminton Court 2",
-        },
-        {
-          id: "cricket-1",
-          title: "Cricket Ground",
-        },
-        {
-          id: "pickleball-1",
-          title: "Pickleball Court",
-        },
-      ],
-      is_location_enabled: true,
-      date: [
-        // Will be dynamically populated with next 7 days
-      ],
-      is_date_enabled: true,
-      time: [
-        // Will be dynamically populated based on availability
-      ],
-      is_time_enabled: true,
-    },
-  },
-  DETAILS: {
-    screen: "DETAILS",
-    data: {
-      sport: "badminton",
-      location: "badminton-1",
-      date: "2024-01-01",
-      time: "10:00",
+      sports: [],
+      durations: WHATSAPP_FLOW.screens.find(s => s.id === "BOOKING").data.durations.__example__, // Fallback to example if needed
+      time_slots: [],
     },
   },
   SUMMARY: {
     screen: "SUMMARY",
     data: {
-      appointment:
-        "Badminton Court 1\nMon Jan 01 2024 at 10:00.",
-      details:
-        "Name: John Doe\nEmail: john@example.com\nPhone: 123456789\n\nNo special requirements",
-      sport: "badminton",
-      location: "badminton-1",
-      date: "2024-01-01",
-      time: "10:00",
-      name: "John Doe",
-      email: "john@example.com",
-      phone: "123456789",
-      more_details: "No special requirements",
+      total_amount: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.total_amount,
+      discount_info: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.discount_info,
+      rates: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.rates,
+      cancellation_policy: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.cancellation_policy,
+      terms: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.terms,
+      sport: "",
+      date: "",
+      duration: "",
+      time_slots: "",
+      name: "",
+      phone: "",
+      email: "",
     },
-  },
-  TERMS: {
-    screen: "TERMS",
-    data: {},
   },
   SUCCESS: {
     screen: "SUCCESS",
     data: {
+      invoice_url: WHATSAPP_FLOW.screens.find(s => s.id === "SUCCESS").data.invoice_url,
       extension_message_response: {
         params: {
           flow_token: "REPLACE_FLOW_TOKEN",
-          some_param_name: "PASS_CUSTOM_VALUE",
+          booking_id: "",
         },
       },
     },
   },
 };
+
 const getNextScreen = async (decryptedBody) => {
   const { screen, data, version, action, flow_token } = decryptedBody;
   
-  // Connect to database
   await connectToDatabase();
   
-  // handle health check request
   if (action === "ping") {
-    return {
-      data: {
-        status: "active",
-      },
-    };
+    return { data: { status: "active" } };
   }
 
-  // handle error notification
   if (data?.error) {
     console.warn("Received client error:", data);
-    return {
-      data: {
-        acknowledged: true,
-      },
-    };
+    return { data: { acknowledged: true } };
   }
 
-  // handle initial request when opening the flow and display APPOINTMENT screen
   if (action === "INIT") {
     try {
-      // Get dynamic data from database
       const sportsFacilities = await flowDbUtils.getSportsFacilities();
       const availableDates = await flowDbUtils.getAvailableDates();
+      await flowDbUtils.saveFlowState(flow_token, "BOOKING", {});
       
-      // Save initial flow state
-      await flowDbUtils.saveFlowState(flow_token, "APPOINTMENT", {});
+      // Format sports for RadioButtonsGroup
+      const formattedSports = sportsFacilities.map(sport => ({
+        id: sport.id,
+        title: sport.title
+      }));
       
       return {
-        ...SCREEN_RESPONSES.APPOINTMENT,
+        ...SCREEN_RESPONSES.BOOKING,
         data: {
-          ...SCREEN_RESPONSES.APPOINTMENT.data,
-          // Update with dynamic data
-          department: sportsFacilities,
-          date: availableDates,
-          // these fields are disabled initially. Each field is enabled when previous fields are selected
-          is_location_enabled: false,
-          is_date_enabled: false,
-          is_time_enabled: false,
+          ...SCREEN_RESPONSES.BOOKING.data,
+          sports: formattedSports,
+          time_slots: sportsFacilities.length > 0 ? 
+            [{id: 'default1', title: 'Morning Slot'}, {id: 'default2', title: 'Evening Slot'}] : [],
         },
       };
     } catch (error) {
       console.error("Error initializing flow:", error);
-      // Fallback to static data if database fails
-      return {
-        ...SCREEN_RESPONSES.APPOINTMENT,
-        data: {
-          ...SCREEN_RESPONSES.APPOINTMENT.data,
-          is_location_enabled: false,
-          is_date_enabled: false,
-          is_time_enabled: false,
-        },
-      };
+      return { ...SCREEN_RESPONSES.BOOKING };
     }
   }
 
   if (action === "data_exchange") {
-    // handle the request based on the current screen
     switch (screen) {
-      // handles when user interacts with APPOINTMENT screen
-      case "APPOINTMENT":
+      case "BOOKING":
         try {
-          // Save current selections to database
-          if (data.sport || data.location || data.date || data.time) {
-            await flowDbUtils.saveFlowState(flow_token, "APPOINTMENT", data);
+          if (data.sport || data.date || data.duration || data.time_slots) {
+            await flowDbUtils.saveFlowState(flow_token, "BOOKING", data);
           }
           
-          // Filter locations based on selected sport
-          let filteredLocations = SCREEN_RESPONSES.APPOINTMENT.data.location;
-          if (data.sport) {
-            filteredLocations = SCREEN_RESPONSES.APPOINTMENT.data.location.filter(
-              location => location.id.startsWith(data.sport)
-            );
-          }
-          
-          // Get available dates
-          const availableDates = await flowDbUtils.getAvailableDates();
-          
-          // Get available time slots if sport and date are selected
           let availableTimeSlots = [];
-          if (data.sport && data.date) {
-            availableTimeSlots = await flowDbUtils.getAvailableTimeSlots(data.sport, data.date);
+          if (data.sport && data.date && data.duration) {
+            availableTimeSlots = await flowDbUtils.getAvailableTimeSlots(data.sport, data.date, data.duration);
+            availableTimeSlots = availableTimeSlots.map(slot => ({
+              id: `${slot.id}-${(parseInt(slot.id.split(':')[0]) + parseInt(data.duration)).toString().padStart(2, '0')}:${slot.id.split(':')[1]}`,
+              title: `${slot.id} - ${(parseInt(slot.id.split(':')[0]) + parseInt(data.duration)).toString().padStart(2, '0')}:${slot.id.split(':')[1]}`,
+              enabled: slot.enabled
+            }));
           }
           
+          if (data.sport && data.date && data.duration && data.time_slots) {
+            const sportType = data.sport;
+            const durationHours = parseFloat(data.duration);
+            const isWeekend = new Date(data.date).getDay() === 0 || new Date(data.date).getDay() === 6;
+            const timeSlot = data.time_slots;
+            const isEvening = parseInt(timeSlot.split('-')[0].split(':')[0]) >= 17;
+            
+            let hourlyRate = 0;
+            if (sportType === 'badminton') {
+              hourlyRate = isWeekend ? (isEvening ? 450 : 400) : (isEvening ? 350 : 300);
+            } else if (sportType === 'cricket') {
+              hourlyRate = isWeekend ? (isEvening ? 2200 : 2000) : (isEvening ? 1800 : 1500);
+            } else if (sportType === 'pickleball') {
+              hourlyRate = isWeekend ? (isEvening ? 350 : 300) : (isEvening ? 250 : 200);
+            }
+            
+            let discountPercent = 0;
+            let discountInfo = '';
+            if (durationHours >= 2 && durationHours < 3) {
+              discountPercent = 5;
+              discountInfo = '5% off for 2-hour booking';
+            } else if (durationHours >= 3 && durationHours < 4) {
+              discountPercent = 10;
+              discountInfo = '10% off for 3-hour booking';
+            } else if (durationHours >= 4) {
+              discountPercent = 15;
+              discountInfo = '15% off for 4-hour booking';
+            }
+            
+            const totalBeforeDiscount = hourlyRate * durationHours;
+            const discountAmount = totalBeforeDiscount * (discountPercent / 100);
+            const totalAmount = Math.round(totalBeforeDiscount - discountAmount);
+            
+            const sportName = SCREEN_RESPONSES.BOOKING.data.sports.find(
+              (sport) => sport.id === data.sport
+            )?.title || data.sport;
+            
+            return {
+              screen: "SUMMARY",
+              data: {
+                ...SCREEN_RESPONSES.SUMMARY.data,
+                total_amount: totalAmount,
+                discount_info: discountInfo,
+                sport: sportName,
+                date: data.date,
+                duration: data.duration,
+                time_slots: data.time_slots,
+              },
+            };
+          }
+          
+          const sports = await flowDbUtils.getSportsFacilities();
+          const formattedSports = sports.map(sport => ({
+            id: sport.id,
+            title: sport.title
+          }));
+          
           return {
-            ...SCREEN_RESPONSES.APPOINTMENT,
+            ...SCREEN_RESPONSES.BOOKING,
             data: {
-              // copy initial screen data then override specific fields
-              ...SCREEN_RESPONSES.APPOINTMENT.data,
-              // each field is enabled only when previous fields are selected
-              is_location_enabled: Boolean(data.sport),
-              is_date_enabled: Boolean(data.sport) && Boolean(data.location),
-              is_time_enabled:
-                Boolean(data.sport) &&
-                Boolean(data.location) &&
-                Boolean(data.date),
-
-              // Update with dynamic filtered data
-              location: filteredLocations,
-              date: availableDates,
-              time: availableTimeSlots.length > 0 ? availableTimeSlots : SCREEN_RESPONSES.APPOINTMENT.data.time,
-              
-              // Preserve user selections
+              ...SCREEN_RESPONSES.BOOKING.data,
+              sports: formattedSports,
+              time_slots: availableTimeSlots.length > 0 ? availableTimeSlots : 
+                [{id: 'default1', title: 'Morning Slot'}, {id: 'default2', title: 'Evening Slot'}],
               ...data,
             },
           };
         } catch (error) {
-          console.error("Error processing APPOINTMENT screen:", error);
-          // Fallback to basic filtering if database fails
+          console.error("Error processing BOOKING screen:", error);
           return {
-            ...SCREEN_RESPONSES.APPOINTMENT,
-            data: {
-              ...SCREEN_RESPONSES.APPOINTMENT.data,
-              is_location_enabled: Boolean(data.sport),
-              is_date_enabled: Boolean(data.sport) && Boolean(data.location),
-              is_time_enabled: Boolean(data.sport) && Boolean(data.location) && Boolean(data.date),
-              ...data,
-            },
+            ...SCREEN_RESPONSES.BOOKING,
+            data: { ...SCREEN_RESPONSES.BOOKING.data, ...data },
           };
         }
 
-      // handles when user completes DETAILS screen
-      case "DETAILS":
-        try {
-          // Save user details to database
-          await flowDbUtils.saveFlowState(flow_token, "DETAILS", data);
-          
-          // Get facility name from ID
-          const sportName = SCREEN_RESPONSES.APPOINTMENT.data.department.find(
-            (sport) => sport.id === data.sport
-          )?.title || data.sport;
-          
-          const locationName = SCREEN_RESPONSES.APPOINTMENT.data.location.find(
-            (loc) => loc.id === data.location
-          )?.title || data.location;
-          
-          // Format date from database or use provided date
-          let dateName = data.date;
-          const availableDates = await flowDbUtils.getAvailableDates();
-          const dateObj = availableDates.find(d => d.id === data.date);
-          if (dateObj) {
-            dateName = dateObj.title;
-          }
-
-          const appointment = `${sportName} - ${locationName}\n${dateName} at ${data.time}`;
-
-          const details = `Name: ${data.name}\nEmail: ${data.email}\nPhone: ${data.phone}\n"${data.more_details || 'No special requirements'}"`;
-
-          return {
-            ...SCREEN_RESPONSES.SUMMARY,
-            data: {
-              appointment,
-              details,
-              // return the same fields sent from client back to submit in the next step
-              ...data,
-            },
-          };
-        } catch (error) {
-          console.error("Error processing DETAILS screen:", error);
-          // Fallback to basic formatting if database fails
-          const appointment = `${data.sport} - ${data.location}\n${data.date} at ${data.time}`;
-          const details = `Name: ${data.name}\nEmail: ${data.email}\nPhone: ${data.phone}\n"${data.more_details || 'No special requirements'}"`;
-          
-          return {
-            ...SCREEN_RESPONSES.SUMMARY,
-            data: {
-              appointment,
-              details,
-              ...data,
-            },
-          };
-        }
-
-      // handles when user completes SUMMARY screen
       case "SUMMARY":
         try {
-          // Get the complete flow state with all user selections
-          const flowState = await flowDbUtils.getFlowState(flow_token);
+          await flowDbUtils.saveFlowState(flow_token, "SUMMARY", data);
           
-          // Create the booking in database
-          const booking = await flowDbUtils.createBookingFromFlow(flowState || data);
+          const bookingDetails = {
+            sport: data.sport,
+            date: data.date,
+            duration: data.duration,
+            time_slots: data.time_slots,
+            total_amount: data.total_amount,
+            name: data.name,
+            phone: data.phone,
+            email: data.email || '',
+            agree_cancellation: data.agree_cancellation,
+            agree_terms: data.agree_terms
+          };
           
-          // send success response to complete and close the flow
+          const invoiceUrl = `https://example.com/invoice/${flow_token}`;
+          
           return {
-            ...SCREEN_RESPONSES.SUCCESS,
+            screen: "SUCCESS",
             data: {
+              invoice_url: invoiceUrl,
               extension_message_response: {
                 params: {
                   flow_token,
-                  booking_id: booking._id.toString(),
+                  booking_details: JSON.stringify(bookingDetails)
                 },
               },
             },
           };
         } catch (error) {
-          console.error("Error creating booking:", error);
-          // Return success anyway to close the flow, but log the error
+          console.error("Error processing SUMMARY screen:", error);
           return {
-            ...SCREEN_RESPONSES.SUCCESS,
+            screen: "SUCCESS",
             data: {
+              invoice_url: "https://example.com/invoice/error",
               extension_message_response: {
                 params: {
                   flow_token,
-                  error: "Failed to create booking, please try again later.",
+                  error: "Failed to process booking details, but payment was successful."
                 },
               },
             },

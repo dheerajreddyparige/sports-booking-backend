@@ -8,7 +8,7 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "init-db": "node src/util/scripts/initDb.js",
-    "demo": "node src/util/scripts/demoBooking.js"
+    "demo": "node src/utils/scripts/demoBooking.js"
   },
   "keywords": [],
   "author": "",
