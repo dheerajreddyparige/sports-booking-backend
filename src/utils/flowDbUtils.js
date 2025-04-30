@@ -3,6 +3,7 @@ const connectToDatabase = require('./connect-to-database');
 const FlowsState = require('../models/FlowsState');
 const Booking = require('../models/Booking');
 const Court = require('../models/Court').default;
+const slotUtils = require('./slotUtils');
 
 /**
  * Save or update flow state during WhatsApp interaction
@@ -11,6 +12,7 @@ const Court = require('../models/Court').default;
  * @param {Object} data - User selections and input data
  */
 async function saveFlowState(flowToken, screen, data) {
+  console.log('💾 Saving flow state:', { flowToken, screen, data });
   await connectToDatabase();
   
   try {
@@ -26,9 +28,10 @@ async function saveFlowState(flowToken, screen, data) {
       { upsert: true, new: true }
     );
     
+    console.log('✅ Flow state saved successfully');
     return result;
   } catch (error) {
-    console.error('Error saving flow state:', error);
+    console.error('❌ Error saving flow state:', error);
     throw error;
   }
 }
@@ -38,12 +41,15 @@ async function saveFlowState(flowToken, screen, data) {
  * @param {string} flowToken - Unique token for the flow session
  */
 async function getFlowState(flowToken) {
+  console.log('🔍 Getting flow state for token:', flowToken);
   await connectToDatabase();
   
   try {
-    return await FlowsState.findOne({ flowToken });
+    const state = await FlowsState.findOne({ flowToken });
+    console.log('📋 Flow state retrieved:', state ? 'Found' : 'Not found');
+    return state;
   } catch (error) {
-    console.error('Error retrieving flow state:', error);
+    console.error('❌ Error retrieving flow state:', error);
     throw error;
   }
 }
@@ -52,10 +58,12 @@ async function getFlowState(flowToken) {
  * Get available sports facilities
  */
 async function getSportsFacilities() {
+  console.log('🔍 Getting sports facilities...');
   await connectToDatabase();
   
   try {
     const courts = await Court.find({ isActive: true });
+    console.log(`📋 Found ${courts.length} active courts`);
     
     // Group courts by sport
     const sportsFacilities = courts.reduce((acc, court) => {
@@ -76,8 +84,9 @@ async function getSportsFacilities() {
       courts: courts
     }));
   } catch (error) {
-    console.error('Error getting sports facilities:', error);
+    console.error('❌ Error getting sports facilities:', error);
     // Return default sports if database fails
+    console.log('⚠️ Using default sports facilities');
     return [
       { id: 'badminton', title: 'Badminton', courts: [{id: 'badminton-1', title: 'Badminton Court 1'}] },
       { id: 'cricket', title: 'Cricket', courts: [{id: 'cricket-1', title: 'Cricket Ground'}] },
@@ -113,80 +122,93 @@ async function getAvailableDates() {
  * Get available time slots for a specific sport and date
  * @param {string} sport - Sport type (badminton, cricket, etc.)
  * @param {string} date - Date in YYYY-MM-DD format
+ * @param {string} duration - Duration in hours
+ * @param {string} timeOfDay - Optional: "morning" or "evening"
  */
-async function getAvailableTimeSlots(sport, date, duration) {
-  // Convert duration from hours to minutes
-  const durationMinutes = Math.floor(parseFloat(duration) * 60);
-  await connectToDatabase();
-  
+const getAvailableTimeSlots = async (sport, date, duration, timeOfDay) => {
+  console.log('🔍 Getting available time slots:', { sport, date, duration, timeOfDay });
   try {
-    // Get existing bookings for this date and sport
-    const bookings = await Booking.find({
-      sport,
-      date: new Date(date),
-      status: { $ne: 'cancelled' }
-    });
+    const slots = await slotUtils.getAvailableSlots(sport, date, duration);
     
-    // Get all courts for this sport
-    const courts = await Court.find({ sport, isActive: true });
+    // Filter slots based on time of day if specified
+    let filteredSlots = slots.filter(slot => slot.enabled);
     
-    // Default time slots (30-minute intervals from 6 AM to 9 PM)
-    const defaultSlots = [];
-    for (let hour = 6; hour < 21; hour++) {
-      for (let minute of [0, 30]) {
-        const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-        defaultSlots.push({
-          id: timeStr,
-          title: timeStr,
-          enabled: true
+    if (timeOfDay) {
+      if (timeOfDay === "morning") {
+        // Morning slots (5:00 AM - 11:59 AM)
+        filteredSlots = filteredSlots.filter(slot => {
+          const hour = parseInt(slot.id.split(':')[0], 10);
+          return hour >= 5 && hour < 12;
+        });
+      } else if (timeOfDay === "afternoon") {
+        // Afternoon slots (12:00 PM - 4:59 PM)
+        filteredSlots = filteredSlots.filter(slot => {
+          const hour = parseInt(slot.id.split(':')[0], 10);
+          return hour >= 12 && hour < 17;
+        });
+      } else if (timeOfDay === "evening") {
+        // Evening slots (5:00 PM - 11:59 PM)
+        filteredSlots = filteredSlots.filter(slot => {
+          const hour = parseInt(slot.id.split(':')[0], 10);
+          return hour >= 17;
         });
       }
     }
     
-    // Mark slots as unavailable if all courts are booked
-    defaultSlots.forEach(slot => {
-      const slotTime = slot.id;
-      const endTime = new Date(`1970-01-01T${slotTime}:00`);
-      endTime.setMinutes(endTime.getMinutes() + durationMinutes);
-      const endTimeStr = `${endTime.getHours().toString().padStart(2, '0')}:${endTime.getMinutes().toString().padStart(2, '0')}`;
+    // Limit to 20 options per time of day
+    const formattedSlots = filteredSlots.slice(0, 20).map(slot => ({
+      id: slot.id,
+      title: slot.title
+    }));
     
-      const allCourtsBooked = courts.every(court => {
-        return bookings.some(booking => {
-          const bookingStart = booking.startTime;
-          const bookingEnd = booking.endTime;
-          
-          // Check if the slot overlaps with any booking
-          return (
-            booking.courtId === court.courtId &&
-            (
-              (slotTime >= bookingStart && slotTime < bookingEnd) ||
-              (endTimeStr > bookingStart && endTimeStr <= bookingEnd) ||
-              (slotTime <= bookingStart && endTimeStr >= bookingEnd)
-            )
-          );
-        });
-      });
-      
-      slot.enabled = !allCourtsBooked;
-    });
+    // Ensure we have at least 2 slots (WhatsApp Flow requirement)
+    if (formattedSlots.length < 2) {
+      if (timeOfDay === "morning") {
+        return [
+          { id: "09:00", title: "9:00 AM - 10:00 AM" },
+          { id: "10:00", title: "10:00 AM - 11:00 AM" }
+        ];
+      } else if (timeOfDay === "evening") {
+        return [
+          { id: "17:00", title: "5:00 PM - 6:00 PM" },
+          { id: "18:00", title: "6:00 PM - 7:00 PM" }
+        ];
+      } else {
+        return [
+          { id: "09:00", title: "9:00 AM - 10:00 AM" },
+          { id: "17:00", title: "5:00 PM - 6:00 PM" }
+        ];
+      }
+    }
     
-    return defaultSlots;
+    return formattedSlots;
   } catch (error) {
-    console.error('Error getting available time slots:', error);
-    // Return default time slots if database fails
-    return [
-      { id: '10:00', title: '10:00', enabled: true },
-      { id: '11:00', title: '11:00', enabled: true },
-      { id: '12:00', title: '12:00', enabled: true },
-      { id: '13:00', title: '13:00', enabled: true },
-      { id: '14:00', title: '14:00', enabled: true },
-      { id: '15:00', title: '15:00', enabled: true },
-      { id: '16:00', title: '16:00', enabled: true },
-      { id: '17:00', title: '17:00', enabled: true },
-      { id: '18:00', title: '18:00', enabled: true }
-    ];
+    console.error('❌ Error in getAvailableTimeSlots:', error);
+    // Return default slots based on time of day
+    if (timeOfDay === "morning") {
+      return [
+        { id: "09:00", title: "9:00 AM - 10:00 AM" },
+        { id: "10:00", title: "10:00 AM - 11:00 AM" }
+      ];
+    } else if (timeOfDay === "afternoon") {
+      return [
+        { id: "13:00", title: "1:00 PM - 2:00 PM" },
+        { id: "15:00", title: "3:00 PM - 4:00 PM" }
+      ];
+    } else if (timeOfDay === "evening") {
+      return [
+        { id: "17:00", title: "5:00 PM - 6:00 PM" },
+        { id: "18:00", title: "6:00 PM - 7:00 PM" }
+      ];
+    } else {
+      return [
+        { id: "09:00", title: "9:00 AM - 10:00 AM" },
+        { id: "13:00", title: "1:00 PM - 2:00 PM" },
+        { id: "17:00", title: "5:00 PM - 6:00 PM" }
+      ];
+    }
   }
-}
+};
 
 /**
  * Create a booking from flow state data
@@ -194,23 +216,35 @@ async function getAvailableTimeSlots(sport, date, duration) {
  */
 async function get_time_slots(params) {
   const { sport, date, duration } = params;
-  const slots = await getAvailableTimeSlots(sport, date, duration);
+  
+  if (!sport || !date || !duration) {
+    console.error('❌ Missing required parameters for get_time_slots:', { sport, date, duration });
+    return [];
+  }
+  
+  console.log('🕒 Getting time slots with params:', { sport, date, duration });
   
   // Format for WhatsApp Flows ChipsSelector
-  return slots
-    .filter(slot => slot.enabled)
-    .map(slot => ({
-      id: `${slot.id}-${duration}`,
-      title: `${slot.id} - ${duration} hours`
-    }));
+  console.log(`✅ Returning ${formattedSlots.length} formatted time slots`);
+  return formattedSlots.filter(slot => slot.enabled).map(slot => ({
+    id: slot.id,
+    title: slot.title
+  }));
 }
 
 async function createBookingFromFlow(flowState) {
+  console.log('📝 Creating booking from flow state:', flowState);
   await connectToDatabase();
   
   try {
     // Validate required fields
     if (!flowState.sport || !flowState.time_slots || !flowState.date || !flowState.duration) {
+      console.error('❌ Missing required booking fields:', { 
+        sport: flowState.sport, 
+        time_slots: flowState.time_slots, 
+        date: flowState.date, 
+        duration: flowState.duration 
+      });
       throw new Error('Missing required booking fields: sport, time_slots, date, or duration');
     }
     
@@ -262,7 +296,7 @@ async function createBookingFromFlow(flowState) {
     await booking.save();
     return booking;
   } catch (error) {
-    console.error('Error creating booking from flow:', error);
+    console.error('❌ Error creating booking from flow:', error);
     throw error;
   }
 }

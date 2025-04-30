@@ -52,6 +52,21 @@ const WHATSAPP_FLOW ={
             {"id": "4", "title": "4 Hours (15% off)"}
           ]
         },
+        "time_of_day_options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "title": {"type": "string"}
+            }
+          },
+          "__example__": [
+            {"id": "morning", "title": "Morning"},
+            {"id": "afternoon", "title": "Afternoon"},
+            {"id": "evening", "title": "Evening"}
+          ]
+        },
         "time_slots": {
           "type": "array",
           "items": {
@@ -59,15 +74,51 @@ const WHATSAPP_FLOW ={
             "properties": {
               "id": {"type": "string"},
               "title": {"type": "string"},
-              "start": {"type": "string"},
-              "end": {"type": "string"}
+              "session": {"type": "string", "enum": ["morning", "evening"]}
             }
           },
           "__example__": [
-            {"id": "10:00-11:30", "title": "10:00 AM - 11:30 AM", "start": "10:00", "end": "11:30"},
-            {"id": "13:00-14:30", "title": "1:00 PM - 2:30 PM", "start": "13:00", "end": "14:30"},
-            {"id": "17:00-18:30", "title": "5:00 PM - 6:30 PM", "start": "17:00", "end": "18:30"}
+            {"id": "09:00-10:00", "title": "9:00 AM - 10:00 AM", "session": "morning"},
+            {"id": "10:00-11:00", "title": "10:00 AM - 11:00 AM", "session": "morning"},
+            {"id": "17:00-18:00", "title": "5:00 PM - 6:00 PM", "session": "evening"},
+            {"id": "18:00-19:00", "title": "6:00 PM - 7:00 PM", "session": "evening"}
           ]
+        },
+        "sport": {
+          "type": "string",
+          "__example__": ""
+        },
+        "date": {
+          "type": "string",
+          "__example__": ""
+        },
+        "duration": {
+          "type": "string",
+          "__example__": ""
+        },
+        "time_of_day": {
+          "type": "string",
+          "__example__": ""
+        },
+        "is_date_visible": {
+          "type": "boolean",
+          "__example__": false
+        },
+        "is_duration_visible": {
+          "type": "boolean",
+          "__example__": false
+        },
+        "is_time_of_day_visible": {
+          "type": "boolean",
+          "__example__": false
+        },
+        "is_time_slots_visible": {
+          "type": "boolean",
+          "__example__": false
+        },
+        "is_footer_enabled": {
+          "type": "boolean",
+          "__example__": false
         }
       },
       "layout": {
@@ -90,12 +141,18 @@ const WHATSAPP_FLOW ={
             "label": "Select Sport",
             "data-source": "${data.sports}",
             "required": true,
-            "image-source": "${data.sports.image}",
-            "alt-text-source": "${data.sports.alt-text}",
             "on-select-action": {
               "name": "data_exchange",
               "payload": {
-                "sport": "${screen.data.sport}"
+                "sport": "${form.sport}",
+                "is_date_visible": true,
+                "date": "",
+                "duration": "",
+                "time_of_day": "",
+                "is_duration_visible": false,
+                "is_time_of_day_visible": false,
+                "is_time_slots_visible": false,
+                "is_footer_enabled": false
               }
             }
           },
@@ -103,12 +160,14 @@ const WHATSAPP_FLOW ={
             "type": "DatePicker",
             "name": "date",
             "label": "Select Date",
-            "required": true,
+            "required": "${data.is_date_visible}",
+            "visible": "${data.is_date_visible}",
             "on-select-action": {
               "name": "data_exchange",
               "payload": {
-                "sport": "${screen.data.sport}",
-                "date": "${screen.data.date}"
+                "sport": "${data.sport}",
+                "date": "${form.date}",
+                "is_duration_visible": true
               }
             }
           },
@@ -117,13 +176,33 @@ const WHATSAPP_FLOW ={
             "name": "duration",
             "label": "Select Duration",
             "data-source": "${data.durations}",
-            "required": true,
+            "required": "${data.is_duration_visible}",
+            "visible": "${data.is_duration_visible}",
             "on-select-action": {
               "name": "data_exchange",
               "payload": {
-                "sport": "${screen.data.sport}",
-                "date": "${screen.data.date}",
-                "duration": "${screen.data.duration}"
+                "sport": "${data.sport}",
+                "date": "${data.date}",
+                "duration": "${form.duration}",
+                "is_time_of_day_visible": true
+              }
+            }
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "time_of_day",
+            "label": "Select Time of Day",
+            "data-source": "${data.time_of_day_options}",
+            "required": "${data.is_time_of_day_visible}",
+            "visible": "${data.is_time_of_day_visible}",
+            "on-select-action": {
+              "name": "data_exchange",
+              "payload": {
+                "sport": "${data.sport}",
+                "date": "${data.date}",
+                "duration": "${data.duration}",
+                "time_of_day": "${form.time_of_day}",
+                "is_time_slots_visible": true
               }
             }
           },
@@ -132,12 +211,14 @@ const WHATSAPP_FLOW ={
             "name": "time_slots",
             "label": "Available Time Slots",
             "data-source": "${data.time_slots}",
-            "required": true,
-            "max-selected-items": 1
+            "required": "${data.is_time_slots_visible}",
+            "max-selected-items": 1,
+            "visible": "${data.is_time_slots_visible}",
+            "enabled": "${data.is_time_slots_visible}"
           },
           {
             "type": "TextBody",
-            "text": "📞 For bulk bookings (2+ hours), contact: 9876543210"
+            "text": "📞 For bulk bookings, Contact: 9876543210"
           },
           {
             "type": "EmbeddedLink",
@@ -150,13 +231,15 @@ const WHATSAPP_FLOW ={
           {
             "type": "Footer",
             "label": "Continue",
+            "enabled": "${data.is_footer_enabled}",
             "on-click-action": {
               "name": "data_exchange",
               "payload": {
-                "sport": "${screen.data.sport}",
-                "date": "${screen.data.date}",
-                "duration": "${screen.data.duration}",
-                "time_slots": "${screen.data.time_slots}"
+                "sport": "${data.sport}",
+                "date": "${data.date}",
+                "duration": "${data.duration}",
+                "time_of_day": "${data.time_of_day}",
+                "time_slots": "${data.time_slots}"
               }
             }
           }
@@ -169,7 +252,11 @@ const WHATSAPP_FLOW ={
       "data": {
         "total_amount": {
           "type": "number",
-          "__example__": 855.00
+          "__example__": 855
+        },
+        "discount_info": {
+          "type": "string",
+          "__example__": "5% off for 2-hour booking"
         },
         "rates": {
           "type": "string",
@@ -193,7 +280,7 @@ const WHATSAPP_FLOW ={
           },
           {
             "type": "TextBody",
-            "text": "Sport: ${screen.data.sport}\nDate: ${screen.data.date}\nDuration: ${screen.data.duration}\nTime Slot: ${screen.data.time_slots}\nRates:\n${data.rates}\nTotal Amount: ₹${data.total_amount}\n${data.discount_info}"
+            "text": "Sport: ${screen.data.sport}\nDate: ${screen.data.date}\nDuration: ${screen.data.duration}\nTime of Day: ${screen.data.time_of_day}\nTime Slot: ${screen.data.time_slots}\nRates:\n${data.rates}\nTotal Amount: ₹${data.total_amount}\n${data.discount_info}"
           },
           {
             "type": "TextInput",
@@ -219,7 +306,7 @@ const WHATSAPP_FLOW ={
             "name": "agree_cancellation",
             "label": "Cancellation Policy Agreement",
             "data-source": [
-              {"id": "cancellation", "title": "I agree to the icy"}
+              {"id": "cancellation", "title": "I agree to the Cancellation Policy"}
             ],
             "required": true
           },
@@ -232,7 +319,7 @@ const WHATSAPP_FLOW ={
             "name": "agree_terms",
             "label": "Terms & Conditions Agreement",
             "data-source": [
-              {"id": "terms", "title": "I agree to the"}
+              {"id": "terms", "title": "I agree to the Terms & Conditions"}
             ],
             "required": true
           },
@@ -249,6 +336,7 @@ const WHATSAPP_FLOW ={
                 "sport": "${screen.data.sport}",
                 "date": "${screen.data.date}",
                 "duration": "${screen.data.duration}",
+                "time_of_day": "${screen.data.time_of_day}",
                 "time_slots": "${screen.data.time_slots}",
                 "total_amount": "${data.total_amount}",
                 "discount_info": "${data.discount_info}",
@@ -270,7 +358,7 @@ const WHATSAPP_FLOW ={
       "data": {
         "invoice_url": {
           "type": "string",
-          "__example__": "https://www.pitzone.com"
+          "__example__": "[invalid url, do not cite]"
         }
       },
       "layout": {
