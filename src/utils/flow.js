@@ -87,27 +87,24 @@ const getNextScreen = async (decryptedBody) => {
         image: sport.id === 'badminton' ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' : 
                sport.id === 'cricket' ? 'https://www.bing.com/images/search?q=cricket%20photo&FORM=IQFRBA&id=4EB3BB378E53EAA46D569563A3A6F83E3E801B15' : 
               'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
-        "alt-text": `${sport.title} court`
+        description: `${sport.title} court`,
+        metadata:'90'
+        
       }));
   
       // Define durations
       const formattedDurations = [
         { id: "1", title: "1 Hour" },
-        { id: "1.5", title: "1.5 Hours" },
-        { id: "2", title: "2 Hours (5% off)" },
-        { id: "2.5", title: "2.5 Hours (5% off)" },
-        { id: "3", title: "3 Hours (10% off)" },
-        { id: "3.5", title: "3.5 Hours (10% off)" },
-        { id: "4", title: "4 Hours (15% off)" }
+        {"id": "1", "title": "1 Hour", "description":"","metadata": "" },
+        {"id": "1.5", "title": "1.5 Hours", "description":"","metadata": "" },
+        {"id": "2", "title": "2 Hours", "description":"","metadata": "5% off" },
+        {"id": "2.5", "title": "2.5 Hours", "description":"","metadata": "5% off" },
+        {"id": "3", "title": "3 Hours", "description":"","metadata": "10% off" },
+        {"id": "3.5", "title": "3.5 Hours", "description":"","metadata": "10% off" },
+        {"id": "4", "title": "4 Hours", "description":"","metadata": "15% off" }
       ];
   
-      // Define time of day options
-      const timeOfDayOptions = [
-        { id: "morning", title: "Morning (5:00 AM–11:59 AM)" },
-        { id: "afternoon", title: "Afternoon (12:00 PM–4:59 PM)" },
-        { id: "evening", title: "Evening (5:00 PM–11:59 PM)" }
-      ];
-  
+    
       // Define default time slots (to avoid ChipsSelector error)
       const formattedTimeSlots = [
         { id: "09:00-10:00", title: "9:00 AM - 10:00 AM" },
@@ -120,10 +117,9 @@ const getNextScreen = async (decryptedBody) => {
       
       console.log('💾 Saving initial flow state...');
       await flowDbUtils.saveFlowState(flow_token, "BOOKING", {
-        is_date_visible: false,
-        is_duration_visible: false,
-        is_time_of_day_visible: false,
-        is_time_slots_visible: false,
+        is_date_enabled: false,
+        is_duration_enabled: false,
+        is_time_slots_enabled: false,
         is_footer_enabled: false
       });
       console.log('✅ Initial flow state saved');
@@ -134,13 +130,10 @@ const getNextScreen = async (decryptedBody) => {
           ...SCREEN_RESPONSES.BOOKING.data,
           sports: formattedSports,
           durations: formattedDurations,
-          time_of_day_options: timeOfDayOptions,
           time_slots: formattedTimeSlots,
-          dates: availableDates,
-          is_date_visible: false,
-          is_duration_visible: false,
-          is_time_of_day_visible: false,
-          is_time_slots_visible: false,
+          is_date_enabled: false,
+          is_duration_enabled: false,
+          is_time_slots_enabled: false,
           is_footer_enabled: false
         },
       };
@@ -171,31 +164,22 @@ const getNextScreen = async (decryptedBody) => {
           
           // Update visibility flags based on client payload or current selections
           const visibilityFlags = {
-            is_date_visible: data.is_date_visible !== undefined ? data.is_date_visible : Boolean(mergedData.sport),
-            is_duration_visible: data.is_duration_visible !== undefined ? data.is_duration_visible : Boolean(mergedData.sport && mergedData.date),
-            is_time_of_day_visible: data.is_time_of_day_visible !== undefined ? data.is_time_of_day_visible : Boolean(mergedData.sport && mergedData.date && mergedData.duration),
-            is_time_slots_visible: data.is_time_slots_visible !== undefined ? data.is_time_slots_visible : Boolean(mergedData.sport && mergedData.date && mergedData.duration && mergedData.time_of_day)
+            is_date_enabled: data.is_date_enabled !== undefined ? data.is_date_enabled : Boolean(mergedData.sport),
+            is_duration_enabled: data.is_duration_enabled !== undefined ? data.is_duration_enabled : Boolean(mergedData.sport && mergedData.date),
+            is_time_slots_enabled: data.is_time_slots_enabled !== undefined ? data.is_time_slots_enabled : Boolean(mergedData.sport && mergedData.date && mergedData.duration)
           };
-          
-          // Handle footer enablement with more robust checking
-          const hasTimeSlotSelected = Boolean( 
-            mergedData.time_slots && 
-            (typeof mergedData.time_slots === 'string' ? 
-              mergedData.time_slots.trim() !== "" : 
-              Array.isArray(mergedData.time_slots) && mergedData.time_slots.length > 0) 
-          ); 
+
           
           // Enable footer when all required fields are filled AND a time slot is selected 
           visibilityFlags.is_footer_enabled = data.is_footer_enabled === true || 
-            (Boolean(mergedData.sport && mergedData.date && mergedData.duration && mergedData.time_of_day) && hasTimeSlotSelected);
+            (Boolean(mergedData.sport && mergedData.date && mergedData.duration && mergedData.time_slot) );
           
-          console.log('🔍 Time slot selected:', hasTimeSlotSelected);
+         /* console.log('🔍 Time slot selected:', hasTimeSlotSelected);*/
           
           console.log("Current data:", {
             sport: mergedData.sport,
             date: mergedData.date,
             duration: mergedData.duration,
-            time_of_day: mergedData.time_of_day,
             time_slots: mergedData.time_slots
           });
           console.log("Visibility flags:", visibilityFlags);
@@ -216,33 +200,21 @@ const getNextScreen = async (decryptedBody) => {
             image: sport.id === 'badminton' ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' : 
                    sport.id === 'cricket' ? 'https://www.bing.com/images/search?q=cricket%20photo&FORM=IQFRBA&id=4EB3BB378E53EAA46D569563A3A6F83E3E801B15' : 
                   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
-            "alt-text": `${sport.title} court`
+            description: `${sport.title} court`,
+            metadata:'90'
+            
           }));
-          
-          // Get available dates
-          const availableDates = await flowDbUtils.getAvailableDates();
-          
-          // Define durations
           const formattedDurations = [
-            { id: "1", title: "1 Hour" },
-            { id: "1.5", title: "1.5 Hours" },
-            { id: "2", title: "2 Hours (5% off)" },
-            { id: "2.5", title: "2.5 Hours (5% off)" },
-            { id: "3", title: "3 Hours (10% off)" },
-            { id: "3.5", title: "3.5 Hours (10% off)" },
-            { id: "4", title: "4 Hours (15% off)" }
+            {"id": "1", "title": "1 Hour", "description":"","metadata": "" },
+            {"id": "1.5", "title": "1.5 Hours", "description":"","metadata": "" },
+            {"id": "2", "title": "2 Hours", "description":"","metadata": "5% off" },
+            {"id": "2.5", "title": "2.5 Hours", "description":"","metadata": "5% off" },
+            {"id": "3", "title": "3 Hours", "description":"","metadata": "10% off" },
+            {"id": "3.5", "title": "3.5 Hours", "description":"","metadata": "10% off" },
+            {"id": "4", "title": "4 Hours", "description":"","metadata": "15% off" }
           ];
-          
-          // Define time of day options
-          const timeOfDayOptions = [
-            { id: "morning", title: "Morning (5:00 AM–11:59 AM)" },
-            { id: "afternoon", title: "Afternoon (12:00 PM–4:59 PM)" },
-            { id: "evening", title: "Evening (5:00 PM–11:59 PM)" }
-          ];
-          
-          // Get time slots if all required fields are present
-          let timeSlots = [
-            { id: "09:00-10:00", title: "9:00 AM - 10:00 AM" },
+           let timeSlots = [
+            { id: "09:00-10:00", title: "9:00 AM - 10:00 AM","enabled": false },
             { id: "17:00-18:00", title: "5:00 PM - 6:00 PM" }
           ];
           
@@ -261,74 +233,9 @@ const getNextScreen = async (decryptedBody) => {
                 mergedData.date,
                 mergedData.duration
               );
-              
-              // Filter slots based on time of day selection
-              if (mergedData.time_of_day === "morning") {
-                // Morning slots (5:00 AM - 11:59 AM)
-                timeSlots = allSlots.filter(slot => {
-                  const hour = parseInt(slot.id.split(':')[0], 10);
-                  return hour >= 5 && hour < 12;
-                }).slice(0, 20); // Limit to 20 slots
-              } else if (mergedData.time_of_day === "afternoon") {
-                // Afternoon slots (12:00 PM - 4:59 PM)
-                timeSlots = allSlots.filter(slot => {
-                  const hour = parseInt(slot.id.split(':')[0], 10);
-                  return hour >= 12 && hour < 17;
-                }).slice(0, 20); // Limit to 20 slots
-              } else if (mergedData.time_of_day === "evening") {
-                // Evening slots (5:00 PM - 11:59 PM)
-                timeSlots = allSlots.filter(slot => {
-                  const hour = parseInt(slot.id.split(':')[0], 10);
-                  return hour >= 17;
-                }).slice(0, 20); // Limit to 20 slots
-              }
-              
-              // Ensure we have at least 2 slots (WhatsApp Flow requirement)
-              if (timeSlots.length < 2) {
-                if (mergedData.time_of_day === "morning") {
-                  timeSlots = [
-                    { id: "09:00-10:00", title: "9:00 AM - 10:00 AM" },
-                    { id: "10:00-11:00", title: "10:00 AM - 11:00 AM" }
-                  ];
-                } else if (mergedData.time_of_day === "afternoon") {
-                  timeSlots = [
-                    { id: "12:00", title: "12:00 PM - 1:00 PM" },
-                    { id: "13:00", title: "1:00 PM - 2:00 PM" },
-                    { id: "14:00", title: "2:00 PM - 3:00 PM" },
-                    { id: "15:00", title: "3:00 PM - 4:00 PM" },
-                    { id: "16:00", title: "4:00 PM - 5:00 PM" }
-                  ];
-                } else {
-                  timeSlots = [
-                    { id: "17:00-18:00", title: "5:00 PM - 6:00 PM" },
-                    { id: "18:00-19:00", title: "6:00 PM - 7:00 PM" }
-                  ];
-                }
-              }
-              
               console.log(`✅ Filtered ${timeSlots.length} time slots for ${mergedData.time_of_day}`);
             } catch (error) {
               console.error('❌ Error fetching time slots:', error);
-              // Provide default slots based on time of day
-              if (mergedData.time_of_day === "morning") {
-                timeSlots = [
-                  { id: "09:00-10:00", title: "9:00 AM - 10:00 AM" },
-                  { id: "10:00-11:00", title: "10:00 AM - 11:00 AM" }
-                ];
-              } else if (mergedData.time_of_day === "afternoon") {
-                timeSlots = [
-                  { id: "12:00", title: "12:00 PM - 1:00 PM" },
-                  { id: "13:00", title: "1:00 PM - 2:00 PM" },
-                  { id: "14:00", title: "2:00 PM - 3:00 PM" },
-                  { id: "15:00", title: "3:00 PM - 4:00 PM" },
-                  { id: "16:00", title: "4:00 PM - 5:00 PM" }
-                ];
-              } else {
-                timeSlots = [
-                  { id: "17:00-18:00", title: "5:00 PM - 6:00 PM" },
-                  { id: "18:00-19:00", title: "6:00 PM - 7:00 PM" }
-                ];
-              }
             }
           }
           
@@ -338,15 +245,11 @@ const getNextScreen = async (decryptedBody) => {
               ...SCREEN_RESPONSES.BOOKING.data,
               sports: formattedSports,
               durations: formattedDurations,
-              time_of_day_options: timeOfDayOptions,
-              time_slots: timeSlots, // This should be an array
-              dates: availableDates,
+              time_slots: timeSlots, 
               sport: mergedData.sport || "",
               date: mergedData.date || "",
               duration: mergedData.duration || "",
-              time_of_day: mergedData.time_of_day || "",
-              selected_time_slot: mergedData.selected_time_slot || "", // Store selected time slot as string
-              // Don't include time_slots here as it would override the array above
+              time_slot: mergedData.time_slot || "", 
               ...visibilityFlags
             },
           };
