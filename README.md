@@ -54,14 +54,32 @@ This will generate a public/private key pair in the `src/keys` directory. Upload
    - SUCCESS: To display booking confirmation and invoice
 3. Configure the Flow endpoint to point to your server's URL
 4. The flow follows the PITZONE Booking structure with the following features:
-   - Sports selection (Badminton, Cricket, Pickleball)
-   - Date selection
-   - Duration selection with automatic discounts
-   - Time slot selection
+   - Sports selection (Badminton, Cricket, Pickleball) with dynamic pricing
+on   - Date selection
+   - Duration selection with configurable automatic discounts
+   - Time slot selection based on availability
    - User information collection
    - Terms and cancellation policy acceptance
    - Payment integration with Razorpay
    - Booking confirmation with invoice
+
+## Dynamic Configuration System
+
+The booking system now supports dynamic configurations for each sport:
+
+- **Sport-specific pricing**: Each sport has its own configurable base rate
+- **Time-based pricing**: Different rates for morning and evening time periods
+- **Day-based pricing**: Different rates for weekdays and weekends
+- **Dynamic discounts**: Configurable discount percentages based on booking duration
+- **Configurable time slots**: Set opening and closing times for each sport
+
+To initialize the sport configurations in the database:
+
+```bash
+node src/scripts/initSportConfigs.js
+```
+
+For detailed documentation on the dynamic configuration system, see [Dynamic Configuration Documentation](src/docs/DYNAMIC_CONFIG.md).
 
 ## API Endpoints
 

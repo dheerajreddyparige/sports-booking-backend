@@ -301,11 +301,189 @@ async function createBookingFromFlow(flowState) {
   }
 }
 
+/**
+ * Get sport configuration by sport type
+ * @param {string} sport - Sport type (badminton, cricket, pickleball)
+ */
+async function getSportConfig(sport) {
+  console.log(`🔍 Getting configuration for sport: ${sport}`);
+  await connectToDatabase();
+  
+  try {
+    const config = await SportConfig.findOne({ sport, isActive: true });
+    
+    if (config) {
+      console.log(`✅ Found configuration for ${sport}`);
+      return config;
+    } else {
+      console.log(`⚠️ No configuration found for ${sport}, using defaults`);
+      // Return default configuration
+      return {
+        sport,
+        baseRate: sport === 'cricket' ? 600 : sport === 'pickleball' ? 350 : 400,
+        discounts: {
+          twoHour: 5,
+          threeHour: 10,
+          fourHour: 15
+        },
+        availableTimes: {
+          openTime: "05:00",
+          closeTime: "23:00"
+        },
+        maxBookingDays: 7
+      };
+    }
+  } catch (error) {
+    console.error(`❌ Error getting sport configuration for ${sport}:`, error);
+    // Return default configuration on error
+    return {
+      sport,
+      baseRate: sport === 'cricket' ? 600 : sport === 'pickleball' ? 350 : 400,
+      discounts: {
+        twoHour: 5,
+        threeHour: 10,
+        fourHour: 15
+      },
+      availableTimes: {
+        openTime: "05:00",
+        closeTime: "23:00"
+      },
+      maxBookingDays: 7
+    };
+  }
+}
+
+/**
+ * Calculate price for a booking based on sport, duration, date, and time
+ * @param {string} sport - Sport type
+ * @param {string} duration - Duration in hours
+ * @param {string} date - Booking date (YYYY-MM-DD format)
+ * @param {string} startTime - Booking start time (HH:MM format)
+ */
+async function calculatePrice(sport, duration, date, startTime) {
+  console.log(`💰 Calculating price for ${sport}, duration: ${duration}, date: ${date}, time: ${startTime}`);
+  
+  try {
+    const config = await getSportConfig(sport);
+    const durationHours = parseFloat(duration);
+    
+    // Determine if booking is on a weekend
+    const bookingDate = date ? new Date(date) : new Date();
+    const dayOfWeek = bookingDate.getDay(); // 0 = Sunday, 6 = Saturday
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    
+    // Determine if booking is in morning or evening
+    const bookingHour = startTime ? parseInt(startTime.split(':')[0], 10) : new Date().getHours();
+    const morningStartHour = parseInt(config.timePeriods?.morning?.startTime?.split(':')[0] || '05', 10);
+    const eveningStartHour = parseInt(config.timePeriods?.evening?.startTime?.split(':')[0] || '17', 10);
+    const isEvening = bookingHour >= eveningStartHour;
+    
+    // Get appropriate rate based on day and time
+    let baseRate;
+    if (config.pricingRates) {
+      if (isWeekend) {
+        baseRate = isEvening ? 
+          (config.pricingRates.weekend?.evening || config.baseRate * 1.5) : 
+          (config.pricingRates.weekend?.morning || config.baseRate * 1.25);
+      } else {
+        baseRate = isEvening ? 
+          (config.pricingRates.weekday?.evening || config.baseRate * 1.25) : 
+          (config.pricingRates.weekday?.morning || config.baseRate);
+      }
+    } else {
+      // Fallback to base rate if pricing rates not configured
+      baseRate = config.baseRate;
+    }
+    
+    // Calculate discount percentage based on duration
+    let discountPercent = 0;
+    if (durationHours >= 4) {
+      discountPercent = config.discounts.fourHour;
+    } else if (durationHours >= 3) {
+      discountPercent = config.discounts.threeHour;
+    } else if (durationHours >= 2) {
+      discountPercent = config.discounts.twoHour;
+    }
+    
+    // Calculate total amount
+    const totalBeforeDiscount = baseRate * durationHours;
+    const discountAmount = totalBeforeDiscount * (discountPercent / 100);
+    const totalAmount = totalBeforeDiscount - discountAmount;
+    
+    // Determine time period for display
+    const timePeriod = isEvening ? 'evening' : 'morning';
+    const dayType = isWeekend ? 'weekend' : 'weekday';
+    
+    console.log(`💰 Price calculation: Base rate: ${baseRate} (${dayType} ${timePeriod}), Duration: ${durationHours}h, Discount: ${discountPercent}%, Total: ${totalAmount}`);
+    
+    return {
+      baseRate,
+      totalBeforeDiscount,
+      discountPercent,
+      discountAmount,
+      totalAmount: Math.round(totalAmount), // Round to nearest integer
+      timePeriod,
+      dayType
+    };
+  } catch (error) {
+    console.error('❌ Error calculating price:', error);
+    // Fallback calculation
+    const baseRate = sport === 'cricket' ? 600 : sport === 'pickleball' ? 350 : 400;
+    const durationHours = parseFloat(duration);
+    
+    // Apply time and day based pricing even in fallback
+    const bookingDate = date ? new Date(date) : new Date();
+    const dayOfWeek = bookingDate.getDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    
+    const bookingHour = startTime ? parseInt(startTime.split(':')[0], 10) : new Date().getHours();
+    const isEvening = bookingHour >= 17; // 5 PM
+    
+    // Apply rate multipliers
+    let adjustedBaseRate = baseRate;
+    if (isWeekend && isEvening) {
+      adjustedBaseRate = baseRate * 1.5; // Weekend evening
+    } else if (isWeekend || isEvening) {
+      adjustedBaseRate = baseRate * 1.25; // Weekend morning or weekday evening
+    }
+    
+    // Calculate discount
+    let discount = 0;
+    if (durationHours >= 4) {
+      discount = 0.15;
+    } else if (durationHours >= 3) {
+      discount = 0.10;
+    } else if (durationHours >= 2) {
+      discount = 0.05;
+    }
+    
+    const totalBeforeDiscount = adjustedBaseRate * durationHours;
+    const discountAmount = totalBeforeDiscount * discount;
+    const totalAmount = totalBeforeDiscount - discountAmount;
+    
+    // Determine time period for display
+    const timePeriod = isEvening ? 'evening' : 'morning';
+    const dayType = isWeekend ? 'weekend' : 'weekday';
+    
+    return {
+      baseRate: adjustedBaseRate,
+      totalBeforeDiscount,
+      discountPercent: discount * 100,
+      discountAmount,
+      totalAmount: Math.round(totalAmount),
+      timePeriod,
+      dayType
+    };
+  }
+}
+
 module.exports = {
   saveFlowState,
   getFlowState,
   getSportsFacilities,
   getAvailableDates,
   getAvailableTimeSlots,
+  getSportConfig,
+  calculatePrice,
   createBookingFromFlow
 };

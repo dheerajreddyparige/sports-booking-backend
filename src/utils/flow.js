@@ -22,15 +22,13 @@ const SCREEN_RESPONSES = {
   SUMMARY: {
     screen: "SUMMARY",
     data: {
-      total_amount: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.total_amount,
-      discount_info: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.discount_info,
-      rates: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.rates,
-      cancellation_policy: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.cancellation_policy,
-      terms: WHATSAPP_FLOW.screens.find(s => s.id === "SUMMARY").data.terms,
+      total_amount: "" ,
+      discount_info: "",
+      terms: "",
       sport: "",
       date: "",
       duration: "",
-      time_slots: "",
+      time_slot: "",
       name: "",
       phone: "",
       email: "",
@@ -80,28 +78,29 @@ const getNextScreen = async (decryptedBody) => {
       const sportsFacilities = await flowDbUtils.getSportsFacilities();
       console.log(`✅ Found ${sportsFacilities.length} sports facilities`);
       
-      // Format sports for RadioButtonsGroup
+      // Format sports for RadioButtonsGroup with dynamic data
       const formattedSports = sportsFacilities.map(sport => ({
         id: sport.id,
         title: sport.title,
-        image: sport.id === 'badminton' ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' : 
+        image: sport.imageUrl || (sport.id === 'badminton' ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' : 
                sport.id === 'cricket' ? 'https://www.bing.com/images/search?q=cricket%20photo&FORM=IQFRBA&id=4EB3BB378E53EAA46D569563A3A6F83E3E801B15' : 
-              'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
-        description: `${sport.title} court`,
-        metadata:'90'
-        
+              'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='),
+        description: sport.description || `${sport.title} court`,
+        metadata: `₹${sport.baseRate}/hr`
       }));
   
-      // Define durations
+      // Get sport configuration for the first sport to set up durations with dynamic discounts
+      const defaultSportConfig = await flowDbUtils.getSportConfig(sportsFacilities[0]?.id || 'badminton');
+      
+      // Define durations with dynamic discount information
       const formattedDurations = [
-        { id: "1", title: "1 Hour" },
         {"id": "1", "title": "1 Hour", "description":"","metadata": "" },
         {"id": "1.5", "title": "1.5 Hours", "description":"","metadata": "" },
-        {"id": "2", "title": "2 Hours", "description":"","metadata": "5% off" },
-        {"id": "2.5", "title": "2.5 Hours", "description":"","metadata": "5% off" },
-        {"id": "3", "title": "3 Hours", "description":"","metadata": "10% off" },
-        {"id": "3.5", "title": "3.5 Hours", "description":"","metadata": "10% off" },
-        {"id": "4", "title": "4 Hours", "description":"","metadata": "15% off" }
+        {"id": "2", "title": "2 Hours", "description":"","metadata": `${defaultSportConfig.discounts.twoHour}% off` },
+        {"id": "2.5", "title": "2.5 Hours", "description":"","metadata": `${defaultSportConfig.discounts.twoHour}% off` },
+        {"id": "3", "title": "3 Hours", "description":"","metadata": `${defaultSportConfig.discounts.threeHour}% off` },
+        {"id": "3.5", "title": "3.5 Hours", "description":"","metadata": `${defaultSportConfig.discounts.threeHour}% off` },
+        {"id": "4", "title": "4 Hours", "description":"","metadata": `${defaultSportConfig.discounts.fourHour}% off` }
       ];
   
     
@@ -192,26 +191,84 @@ const getNextScreen = async (decryptedBody) => {
           });
           console.log('✅ Flow state updated');
           
+          // Check if this is a footer click (transition to next screen)
+          // If the footer is enabled and the request came from a footer click
+          // (indicated by all required fields being present), transition to SUMMARY screen
+          if (data.is_footer_enabled === true || 
+              (mergedData.sport && mergedData.date && mergedData.duration && mergedData.time_slot && 
+               data.time_slot)) {
+            console.log('🔄 Footer clicked, transitioning to SUMMARY screen');
+            
+            // Calculate total amount based on duration, sport, date and time using dynamic configuration
+            console.log('💰 Calculating price dynamically based on sport, duration, date and time');
+            const priceDetails = await flowDbUtils.calculatePrice(mergedData.sport, mergedData.duration, mergedData.date, mergedData.time_slots);
+            
+            // Extract price details
+            const { baseRate, totalBeforeDiscount, discountPercent, discountAmount, totalAmount } = priceDetails;
+            
+            return {
+              screen: "SUMMARY", // Change screen to SUMMARY according to routing model
+              data: {
+                ...SCREEN_RESPONSES.SUMMARY.data,
+                sport: mergedData.sport || "",
+                date: mergedData.date || "",
+                duration: mergedData.duration || "",
+                time_slot: mergedData.time_slot || "",
+                discount_info: discountPercent > 0 ? `You qualify for ${discountPercent}% off!` : "",
+                total_amount: totalAmount.toString(),
+                base_rate: baseRate.toString(),
+                // Add time and day specific pricing information
+                rate_info: priceDetails.dayType && priceDetails.timePeriod ? 
+                  `${priceDetails.dayType.charAt(0).toUpperCase() + priceDetails.dayType.slice(1)} ${priceDetails.timePeriod} rate applied` : "",
+              },
+            };
+          }
+          
+          // If not transitioning to SUMMARY, return updated BOOKING screen
           // Get sports list
           const sportsFacilities = await flowDbUtils.getSportsFacilities();
-          const formattedSports = sportsFacilities.map(sport => ({
-            id: sport.id,
-            title: sport.title,
-            image: sport.id === 'badminton' ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' : 
-                   sport.id === 'cricket' ? 'https://www.bing.com/images/search?q=cricket%20photo&FORM=IQFRBA&id=4EB3BB378E53EAA46D569563A3A6F83E3E801B15' : 
-                  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
-            description: `${sport.title} court`,
-            metadata:'90'
+          // Format sports with dynamic data
+          const formattedSports = await Promise.all(sportsFacilities.map(async sport => {
+            // Get sport configuration to access pricing rates
+            const sportConfig = await flowDbUtils.getSportConfig(sport.id);
             
+            // Create pricing info string showing the range of rates
+            let pricingInfo = `₹${sportConfig.baseRate}/hr`;
+            
+            // If pricing rates are configured, show the range
+            if (sportConfig.pricingRates) {
+              const weekdayMorning = sportConfig.pricingRates.weekday?.morning || sportConfig.baseRate;
+              const weekendEvening = sportConfig.pricingRates.weekend?.evening || Math.round(sportConfig.baseRate * 1.5);
+              
+              // Show price range if they differ
+              if (weekdayMorning !== weekendEvening) {
+                pricingInfo = `₹${weekdayMorning}-${weekendEvening}/hr (varies by day/time)`;
+              }
+            }
+            
+            return {
+              id: sport.id,
+              title: sport.title,
+              image: sport.imageUrl || (sport.id === 'badminton' ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' : 
+                     sport.id === 'cricket' ? 'https://www.bing.com/images/search?q=cricket%20photo&FORM=IQFRBA&id=4EB3BB378E53EAA46D569563A3A6F83E3E801B15' : 
+                    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='),
+              description: sport.description || `${sport.title} court`,
+              metadata: pricingInfo
+            };
           }));
+          
+          // Get sport configuration for the selected sport or default to first sport
+          const sportConfig = await flowDbUtils.getSportConfig(mergedData.sport || sportsFacilities[0]?.id || 'badminton');
+          
+          // Define durations with dynamic discount information
           const formattedDurations = [
             {"id": "1", "title": "1 Hour", "description":"","metadata": "" },
             {"id": "1.5", "title": "1.5 Hours", "description":"","metadata": "" },
-            {"id": "2", "title": "2 Hours", "description":"","metadata": "5% off" },
-            {"id": "2.5", "title": "2.5 Hours", "description":"","metadata": "5% off" },
-            {"id": "3", "title": "3 Hours", "description":"","metadata": "10% off" },
-            {"id": "3.5", "title": "3.5 Hours", "description":"","metadata": "10% off" },
-            {"id": "4", "title": "4 Hours", "description":"","metadata": "15% off" }
+            {"id": "2", "title": "2 Hours", "description":"","metadata": `${sportConfig.discounts.twoHour}% off` },
+            {"id": "2.5", "title": "2.5 Hours", "description":"","metadata": `${sportConfig.discounts.twoHour}% off` },
+            {"id": "3", "title": "3 Hours", "description":"","metadata": `${sportConfig.discounts.threeHour}% off` },
+            {"id": "3.5", "title": "3.5 Hours", "description":"","metadata": `${sportConfig.discounts.threeHour}% off` },
+            {"id": "4", "title": "4 Hours", "description":"","metadata": `${sportConfig.discounts.fourHour}% off` }
           ];
            let timeSlots = [
             { id: "09:00-10:00", title: "9:00 AM - 10:00 AM","enabled": false },
@@ -266,7 +323,7 @@ const getNextScreen = async (decryptedBody) => {
             sport: data.sport,
             date: data.date,
             duration: data.duration,
-            time_slots: data.time_slots,
+            time_slot: data.time_slots,
             total_amount: data.total_amount,
             name: data.name,
             phone: data.phone,

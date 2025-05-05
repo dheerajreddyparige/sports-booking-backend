@@ -220,6 +220,10 @@ const WHATSAPP_FLOW ={
           "type": "string",
           "__example__": "5% off for 2-hour booking"
         },
+        "rate_info": {
+          "type": "string",
+          "__example__": "Weekend evening rate applied"
+        },
         "rates": {
           "type": "string",
           "__example__": "Badminton: Weekday Morning ₹300/hr, Evening ₹350/hr; Weekend Morning ₹400/hr, Evening ₹450/hr\nCricket: Weekday Morning ₹1500/hr, Evening ₹1800/hr; Weekend Morning ₹2000/hr, Evening ₹2200/hr\nPickleball: Weekday Morning ₹200/hr, Evening ₹250/hr; Weekend Morning ₹300/hr, Evening ₹350/hr"
@@ -242,7 +246,7 @@ const WHATSAPP_FLOW ={
           },
           {
             "type": "TextBody",
-            "text": "Sport: ${data.sport}\nDate: ${data.date}\nDuration: ${data.sport}\nTime of Day: ${screen.data.time_of_day}\nTime Slot: ${screen.data.time_slots}\nRates:\n${data.rates}\nTotal Amount: ₹${data.total_amount}\n${data.discount_info}"
+            "text": "Sport: ${data.sport}\nDate: ${data.date}\nDuration: ${data.duration} Hour(s)\nTime Slot: ${data.time_slot}\n${data.rate_info}\nTotal Amount: ₹${data.total_amount}\n${data.discount_info}"
           },
           {
             "type": "TextInput",
@@ -298,10 +302,10 @@ const WHATSAPP_FLOW ={
                 "sport": "${screen.data.sport}",
                 "date": "${screen.data.date}",
                 "duration": "${screen.data.duration}",
-                "time_of_day": "${screen.data.time_of_day}",
-                "time_slots": "${screen.data.time_slots}",
+                "time_slot": "${data.time_slot}",
                 "total_amount": "${data.total_amount}",
                 "discount_info": "${data.discount_info}",
+                "rate_info": "${data.rate_info}",
                 "name": "${screen.data.name}",
                 "phone": "${screen.data.phone}",
                 "email": "${screen.data.email}",
