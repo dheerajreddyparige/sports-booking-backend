@@ -36,6 +36,7 @@ app.use('/api/health', require('../src/api/health'));
 app.use('/api/available-slots', require('../src/api/available-slots'));
 app.use('/api/bookings', require('../src/api/bookings'));
 app.use('/api/sports', require('../src/api/sports'));
+app.use('/api/webhook', require('../src/api/webhook')); // WhatsApp webhook endpoint
 
 
 // Start the server

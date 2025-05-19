@@ -55,13 +55,37 @@ This will generate a public/private key pair in the `src/keys` directory. Upload
 3. Configure the Flow endpoint to point to your server's URL
 4. The flow follows the PITZONE Booking structure with the following features:
    - Sports selection (Badminton, Cricket, Pickleball) with dynamic pricing
-on   - Date selection
+   - Date selection
    - Duration selection with configurable automatic discounts
    - Time slot selection based on availability
    - User information collection
    - Terms and cancellation policy acceptance
    - Payment integration with Razorpay
    - Booking confirmation with invoice
+
+## WhatsApp Webhook Integration
+
+### Setup Instructions
+
+1. Add the following environment variables to your `.env` file:
+   ```
+   WHATSAPP_PHONE_NUMBER_ID=your_whatsapp_phone_number_id
+   WHATSAPP_ACCESS_TOKEN=your_whatsapp_access_token
+   WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
+   ```
+
+2. Configure the webhook in the WhatsApp Business Platform:
+   - Webhook URL: `https://your-domain.com/api/webhook`
+   - Verify token: Use the same value as `WHATSAPP_VERIFY_TOKEN`
+   - Subscribe to the following events:
+     - `messages`
+     - `message_template_status_update`
+
+3. The webhook endpoint supports:
+   - Receiving incoming messages from customers
+   - Processing template responses
+   - Handling message status updates
+   - Integrating with WhatsApp Flows
 
 ## Dynamic Configuration System
 
