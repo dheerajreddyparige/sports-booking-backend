@@ -7,7 +7,7 @@ require('dotenv').config();
  */
 class WhatsAppService {
   constructor() {
-    this.baseUrl = 'https://graph.facebook.com/v22.0';
+    this.baseUrl = 'https://graph.facebook.com/v17.0';
     this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
     this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   }
@@ -120,6 +120,33 @@ class WhatsAppService {
       return response.data;
     } catch (error) {
       console.error('❌ Error sending interactive message:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Sends a raw message object directly to WhatsApp API
+   * @param {Object} messageData - Complete message data object
+   * @returns {Promise<Object>} - API response
+   */
+  async sendRawMessage(messageData) {
+    console.log('🔄 Sending raw message');
+    
+    try {
+      const response = await axios({
+        method: 'POST',
+        url: `${this.baseUrl}/${this.phoneNumberId}/messages`,
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        data: messageData
+      });
+      
+      console.log('✅ Raw message sent successfully:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error sending raw message:', error.response?.data || error.message);
       throw error;
     }
   }

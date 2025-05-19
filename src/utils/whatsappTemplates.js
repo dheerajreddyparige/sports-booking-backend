@@ -197,9 +197,78 @@ function createPaymentConfirmationTemplate(payment) {
   };
 }
 
+/**
+ * Creates an appointment confirmation template
+ * @param {Object} appointment - Appointment data
+ * @returns {Object} - Template data
+ */
+function createAppointmentConfirmationTemplate(appointment) {
+  return {
+    header: {
+      format: 'text',
+      text: 'Appointment Confirmation'
+    },
+    body: [
+      `Name: ${appointment.name}`,
+      `Date: ${appointment.date}`,
+      `Time: ${appointment.time}`,
+      `PaymentMethod: ${appointment.paymentMethod}`,
+      `Check the information above and confirm or cancel`,
+      `Confirm in 5 mins or it will be cancelled automatically`
+    ],
+    buttons: [
+      { confirm: 'Confirm', cancel: 'Cancel' }
+    ]
+  };
+}
+
+/**
+ * Creates a payment instruction template
+ * @param {Object} appointment - Appointment data
+ * @returns {Object} - Template data
+ */
+function createPaymentInstructionTemplate(appointment) {
+  return {
+    header: {
+      format: 'text',
+      text: 'Payment Instructions'
+    },
+    body: [
+      `Use Below Button to go to payment`,
+      `Thank you choosing our Service`
+    ],
+    buttons: [
+      { pay: 'Pay' }
+    ]
+  };
+}
+
+/**
+ * Creates a welcome template with language selection
+ * @returns {Object} - Template data
+ */
+function createWelcomeTemplate() {
+  return {
+    header: {
+      format: 'text',
+      text: 'Welcome to Notting Apps'
+    },
+    body: [
+      `Select a Language to continue`
+    ],
+    buttons: [
+      { english: 'English' }
+    ]
+  };
+}
+
+// Export the new functions
 module.exports = {
   formatTemplateComponents,
   createBookingConfirmationTemplate,
   createBookingReminderTemplate,
-  createPaymentConfirmationTemplate
+  createPaymentConfirmationTemplate,
+  createAppointmentConfirmationTemplate,
+  createPaymentInstructionTemplate,
+  createWelcomeTemplate
 };

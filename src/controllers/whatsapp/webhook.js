@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { FlowEndpointException } = require('../../utils/encryption');
 const FlowsState = require('../../models/FlowsState');
-const whatsappService = require('../../examples/whatsappWebhookUsage');
+const whatsappMessaging = require('../../services/whatsappMessaging');
 const connectToDatabase = require('../../utils/connect-to-database');
 
 /**
@@ -155,9 +155,7 @@ class WhatsAppWebhookController {
   static async handleTextMessage(message, contacts) {
     const { from, text } = message;
     console.log('📝 Text message:', text.body);
-    await whatsappService.processIncomingMessage(message);
-    // Process text message logic here
-    // This could include natural language processing, keyword detection, etc.
+    await whatsappMessaging.processIncomingMessage(message);
   }
 
   /**
@@ -169,33 +167,24 @@ class WhatsAppWebhookController {
     const { from, interactive } = message;
     console.log('🔄 Interactive message:', interactive);
     
-    // Process interactive message logic here
-    // This could include handling button clicks, list selections, etc.
+    // Process interactive message through the service
+    await whatsappMessaging.processIncomingMessage(message);
   }
 
-  /**
-   * Handles a button message
-   * @param {Object} message - Message object
-   * @param {Array} contacts - Contacts array
-   */
   static async handleButtonMessage(message, contacts) {
     const { from, button } = message;
     console.log('🔘 Button message:', button);
     
-    // Process button message logic here
+    // Process button message through the service
+    await whatsappMessaging.processIncomingMessage(message);
   }
 
-  /**
-   * Handles a template message
-   * @param {Object} message - Message object
-   * @param {Array} contacts - Contacts array
-   */
   static async handleTemplateMessage(message, contacts) {
     const { from, template } = message;
     console.log('📋 Template message:', template);
     
-    // Process template message logic here
-    // This could include handling template responses, etc.
+    // Process template message through the service
+    await whatsappMessaging.processIncomingMessage(message);
   }
 
   /**

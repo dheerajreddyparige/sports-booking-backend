@@ -3,6 +3,7 @@ const connectToDatabase = require('./connect-to-database');
 const FlowsState = require('../models/FlowsState');
 const Booking = require('../models/Booking');
 const Court = require('../models/Court').default;
+const SportConfig = require('../models/SportConfig');
 const slotUtils = require('./slotUtils');
 
 /**
@@ -211,8 +212,9 @@ const getAvailableTimeSlots = async (sport, date, duration, timeOfDay) => {
 };
 
 /**
- * Create a booking from flow state data
- * @param {Object} flowState - Flow state with booking details
+ * Get time slots for a specific sport, date and duration
+ * @param {Object} params - Parameters including sport, date, and duration
+ * @returns {Array} - Array of formatted time slots
  */
 async function get_time_slots(params) {
   const { sport, date, duration } = params;
@@ -224,12 +226,12 @@ async function get_time_slots(params) {
   
   console.log('🕒 Getting time slots with params:', { sport, date, duration });
   
+  // Get available slots using the existing function
+  const slots = await getAvailableTimeSlots(sport, date, duration);
+  
   // Format for WhatsApp Flows ChipsSelector
-  console.log(`✅ Returning ${formattedSlots.length} formatted time slots`);
-  return formattedSlots.filter(slot => slot.enabled).map(slot => ({
-    id: slot.id,
-    title: slot.title
-  }));
+  console.log(`✅ Returning ${slots.length} formatted time slots`);
+  return slots;
 }
 
 async function createBookingFromFlow(flowState) {
