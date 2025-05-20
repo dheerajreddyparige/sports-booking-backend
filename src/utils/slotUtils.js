@@ -1,156 +1,164 @@
-import Booking from "../models/Booking.js";
-import Court from "../models/Court.js";
-import FlowsState from "../models/FlowsState.js";
+// src/utils/slotUtils.js
+const connectToDatabase = require('./connect-to-database');
+const Booking = require('../models/Booking');
+const Court = require('../models/Court').default;
+const SportConfig = require('../models/SportConfig');
 
-const timeToMinutes = (time) => {
-  const [hours, minutes] = time.split(":").map(Number);
-  return hours * 60 + minutes;
-};
-
-const getAvailableSlots = async (sport, date, duration) => {
-  console.log('🕒 Getting available slots:', { sport, date, duration });
+/**
+ * Get available slots for a specific sport, date and duration
+ * @param {string} sport - Sport type (badminton, cricket, etc.)
+ * @param {string} date - Date in YYYY-MM-DD format
+ * @param {number} duration - Duration in hours
+ * @returns {Array} - Array of available time slots
+ */
+async function getAvailableSlots(sport, date, durationHours) {
+  console.log(`🔍 Getting available slots for ${sport} on ${date} for ${durationHours} hours`);
+  await connectToDatabase();
   
-  if (!["badminton", "cricket", "pickleball"].includes(sport)) {
-    console.error('❌ Invalid sport:', sport);
-    throw new Error("Invalid sport");
-  }
-  if (!date || !duration) {
-    console.error('❌ Missing date or duration');
-    throw new Error("Date and duration are required");
-  }
-
-  const durationHours = parseFloat(duration.replace("hr", ""));
-  const durationMinutes = durationHours * 60;
-  console.log(`📏 Duration in minutes: ${durationMinutes}`);
-
-  console.log('🔍 Fetching bookings and courts...');
-  const bookings = await Booking.find({
-    sport,
-    date: new Date(date),
-    status: { $ne: "cancelled" },
-  });
-  console.log(`📋 Found ${bookings.length} existing bookings`);
-  
-  const courts = await Court.find({ sport, isActive: true });
-  console.log(`📋 Found ${courts.length} active courts`);
-  
-  if (!courts.length) {
-    console.error(`❌ No active courts for ${sport}`);
-    throw new Error(`No active courts for ${sport}`);
-  }
-
-  // Generate all possible slots from 5 AM to 12 AM
-  const slots = [];
-  for (let hour = 5; hour < 24; hour++) {
-    for (let minute = 0; minute < 60; minute += 30) {
-      const startTime = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-      let isAvailable = false;
-
-      const courtBookings = bookings.reduce((acc, booking) => {
-        acc[booking.courtId] = acc[booking.courtId] || [];
-        acc[booking.courtId].push({
-          start: booking.startTime,
-          end: booking.endTime,
-        });
-        return acc;
-      }, {});
-
-      if (sport === "badminton") {
-        isAvailable = courts.some((court) => {
-          const courtId = court.courtId;
-          const bookings = courtBookings[courtId] || [];
-          return !bookings.some((booking) => {
-            const bookingStart = timeToMinutes(booking.start);
-            const bookingEnd = timeToMinutes(booking.end);
-            const slotStart = timeToMinutes(startTime);
-            const slotEnd = slotStart + durationMinutes;
-            return slotStart < bookingEnd && slotEnd > bookingStart;
-          });
-        });
-      } else {
-        const courtId = courts[0]?.courtId || 1;
-        const bookings = courtBookings[courtId] || [];
-        isAvailable = !bookings.some((booking) => {
-          const bookingStart = timeToMinutes(booking.start);
-          const bookingEnd = timeToMinutes(booking.end);
-          const slotStart = timeToMinutes(startTime);
-          const slotEnd = slotStart + durationMinutes;
-          return slotStart < bookingEnd && slotEnd > bookingStart;
-        });
-      }
-
-      slots.push({
-        id: startTime,
-        title: `${startTime} - ${formatEndTime(startTime, durationMinutes)}`,
-        enabled: isAvailable,
-      });
+  try {
+    // Get sport configuration for operating hours
+    const sportConfig = await SportConfig.findOne({ sport, isActive: true });
+    
+    if (!sportConfig) {
+      console.warn(`⚠️ No sport configuration found for ${sport}, using default hours`);
+      return generateDefaultTimeSlots(durationHours);
     }
-  }
-
-  console.log(`✅ Generated ${slots.length} time slots, filtering available ones...`);
-  
-  // Filter to only available slots and limit to 20 options
-  const availableSlots = slots.filter(slot => slot.enabled).slice(0, 20);
-  
-  // If we have fewer than 2 available slots, add some default ones
-  if (availableSlots.length < 2) {
-    return [
-      { id: "09:00", title: "9:00 AM - 10:00 AM", enabled: false },
-      { id: "17:00", title: "5:00 PM - 6:00 PM", enabled: false }
-    ];
-  }
-  
-  return availableSlots;
-};
-
-// Helper function to format end time
-const formatEndTime = (startTime, durationMinutes) => {
-  const [hours, minutes] = startTime.split(":").map(Number);
-  let totalMinutes = hours * 60 + minutes + durationMinutes;
-  
-  const endHours = Math.floor(totalMinutes / 60) % 24;
-  const endMinutes = totalMinutes % 60;
-  
-  return `${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}`;
-};
-
-const saveFlowState = async (flowToken, screen, data) => {
-  console.log('💾 Saving flow state:', { flowToken, screen, data });
-  
-  if (!flowToken) {
-    console.error('❌ Flow token is required');
-    throw new Error("Flow token is required");
-  }
-  
-  try {
-    await FlowsState.findOneAndUpdate(
-      { flowToken },
-      { screen, data, updatedAt: new Date() },
-      { upsert: true }
-    );
-    console.log('✅ Flow state saved successfully');
+    
+    // Get operating hours from sport config
+    const openTime = sportConfig.availableTimes?.openTime || "05:00";
+    const closeTime = sportConfig.availableTimes?.closeTime || "23:00";
+    
+    // Get all courts for this sport
+    const courts = await Court.find({ sport, isActive: true });
+    if (!courts || courts.length === 0) {
+      console.warn(`⚠️ No courts found for ${sport}, cannot check availability`);
+      return generateDefaultTimeSlots(durationHours);
+    }
+    
+    // Get all court IDs for this sport
+    const courtIds = courts.map(court => court.courtId);
+    
+    // Get existing bookings for this date and these courts
+    const bookingDate = new Date(date);
+    const nextDay = new Date(date);
+    nextDay.setDate(nextDay.getDate() + 1);
+    
+    const existingBookings = await Booking.find({
+      courtId: { $in: courtIds },
+      date: {
+        $gte: bookingDate,
+        $lt: nextDay
+      },
+      status: { $nin: ['cancelled', 'rejected'] }
+    });
+    
+    console.log(`📋 Found ${existingBookings.length} existing bookings for ${sport} on ${date}`);
+    
+    // Generate all possible time slots based on operating hours
+    const timeSlots = generateTimeSlots(openTime, closeTime, durationHours);
+    
+    // Mark slots as unavailable if they overlap with existing bookings
+    const availableSlots = timeSlots.map(slot => {
+      const [slotHour, slotMinute] = slot.id.split(':').map(Number);
+      const slotStartTime = slotHour * 60 + slotMinute;
+      const slotEndTime = slotStartTime + (durationHours * 60);
+      
+      // Check if this slot overlaps with any existing booking
+      const isOverlapping = existingBookings.some(booking => {
+        const [bookingStartHour, bookingStartMinute] = booking.startTime.split(':').map(Number);
+        const [bookingEndHour, bookingEndMinute] = booking.endTime.split(':').map(Number);
+        
+        const bookingStartTime = bookingStartHour * 60 + bookingStartMinute;
+        const bookingEndTime = bookingEndHour * 60 + bookingEndMinute;
+        
+        // Check for overlap
+        return (
+          (slotStartTime < bookingEndTime && slotEndTime > bookingStartTime) &&
+          // Only consider it unavailable if ALL courts are booked
+          existingBookings.filter(b => 
+            b.startTime === booking.startTime && 
+            b.endTime === booking.endTime
+          ).length >= courtIds.length
+        );
+      });
+      
+      return {
+        ...slot,
+        enabled: !isOverlapping
+      };
+    });
+    
+    console.log(`✅ Generated ${availableSlots.length} time slots, ${availableSlots.filter(s => s.enabled).length} available`);
+    return availableSlots;
   } catch (error) {
-    console.error('❌ Error saving flow state:', error);
-    throw error;
+    console.error('❌ Error getting available slots:', error);
+    return generateDefaultTimeSlots(durationHours);
   }
-};
+}
 
-const getFlowState = async (flowToken) => {
-  console.log('🔍 Getting flow state for token:', flowToken);
+/**
+ * Generate time slots based on operating hours
+ * @param {string} openTime - Opening time (HH:MM format)
+ * @param {string} closeTime - Closing time (HH:MM format)
+ * @param {number} durationHours - Duration in hours
+ * @returns {Array} - Array of time slots
+ */
+function generateTimeSlots(openTime, closeTime, durationHours) {
+  const slots = [];
+  const [openHour, openMinute] = openTime.split(':').map(Number);
+  const [closeHour, closeMinute] = closeTime.split(':').map(Number);
   
-  if (!flowToken) {
-    console.log('⚠️ No flow token provided, returning default state');
-    return { screen: "APPOINTMENT", data: {} };
+  const openMinutes = openHour * 60 + openMinute;
+  const closeMinutes = closeHour * 60 + closeMinute;
+  
+  // Generate slots at 30-minute intervals
+  for (let minutes = openMinutes; minutes <= closeMinutes - (durationHours * 60); minutes += 30) {
+    const hour = Math.floor(minutes / 60);
+    const minute = minutes % 60;
+    
+    const slotId = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+    
+    // Calculate end time for display
+    const endMinutes = minutes + (durationHours * 60);
+    const endHour = Math.floor(endMinutes / 60);
+    const endMinute = endMinutes % 60;
+    
+    // Format times for display (12-hour format with AM/PM)
+    const startTime = formatTime(hour, minute);
+    const endTime = formatTime(endHour, endMinute);
+    
+    slots.push({
+      id: slotId,
+      title: `${startTime} - ${endTime}`,
+      enabled: true
+    });
   }
   
-  try {
-    const state = await FlowsState.findOne({ flowToken });
-    console.log('📋 Flow state retrieved:', state ? 'Found' : 'Not found');
-    return state || { screen: "APPOINTMENT", data: {} };
-  } catch (error) {
-    console.error('❌ Error retrieving flow state:', error);
-    return { screen: "APPOINTMENT", data: {} };
-  }
-};
+  return slots;
+}
 
-export { getAvailableSlots, saveFlowState, getFlowState };
+/**
+ * Format time in 12-hour format with AM/PM
+ * @param {number} hour - Hour (0-23)
+ * @param {number} minute - Minute (0-59)
+ * @returns {string} - Formatted time string
+ */
+function formatTime(hour, minute) {
+  const period = hour >= 12 ? 'PM' : 'AM';
+  const hour12 = hour % 12 || 12;
+  return `${hour12}:${minute.toString().padStart(2, '0')} ${period}`;
+}
+
+/**
+ * Generate default time slots when database lookup fails
+ * @param {number} durationHours - Duration in hours
+ * @returns {Array} - Array of default time slots
+ */
+function generateDefaultTimeSlots(durationHours) {
+  // Default operating hours: 5 AM to 11 PM
+  return generateTimeSlots("05:00", "23:00", durationHours);
+}
+
+module.exports = {
+  getAvailableSlots
+};

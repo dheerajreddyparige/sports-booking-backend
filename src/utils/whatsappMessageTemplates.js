@@ -148,24 +148,35 @@ ${bookingDetails.discountAmount ? `Discount: ₹${bookingDetails.discountAmount}
 }
 
 /**
- * Creates a payment template with Razorpay integration
+ * Creates a payment template for Razorpay integration
+ * @param {string} to - Recipient's phone number
  * @param {Object} bookingDetails - Booking details object
- * @returns {Object} Template data object with payment button
+ * @param {Object} paymentDetails - Payment details including order ID
+ * @returns {Object} Payment template object
  */
-function createPaymentTemplate(bookingDetails) {
+function createPaymentTemplate(to, bookingDetails, paymentDetails) {
   return {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to: bookingDetails.phoneNumber,
+    to,
     type: 'interactive',
     interactive: {
       type: 'button',
       header: {
         type: 'text',
-        text: 'Complete Your Payment'
+        text: 'Booking Confirmation'
       },
       body: {
-        text: `Please complete your payment of ₹${bookingDetails.totalPrice} to confirm your booking for ${bookingDetails.sport} on ${bookingDetails.date} at ${bookingDetails.time}.`
+        text: `Your booking details:
+
+Sport: ${bookingDetails.sport}
+Date: ${bookingDetails.date}
+Time: ${bookingDetails.time} (${bookingDetails.duration} hour${bookingDetails.duration > 1 ? 's' : ''})
+Court: ${bookingDetails.court}
+
+Price: ₹${bookingDetails.totalPrice}
+
+Please confirm your booking by making the payment.`
       },
       footer: {
         text: 'Secure payment via Razorpay'
@@ -182,7 +193,7 @@ function createPaymentTemplate(bookingDetails) {
           {
             type: 'reply',
             reply: {
-              id: 'cancel_booking',
+              id: 'cancel',
               title: 'Cancel'
             }
           }
@@ -193,48 +204,32 @@ function createPaymentTemplate(bookingDetails) {
 }
 
 /**
- * Creates a time slot selection template with dynamic data from database
- * @param {string} to - Recipient's phone number
- * @param {string} sport - Selected sport
- * @param {string} date - Selected date
- * @param {number} duration - Duration in hours
- * @param {Array} slots - Available time slots from database
- * @returns {Object} Interactive list message object
+ * Creates a booking summary template with payment confirmation
+ * @param {Object} bookingDetails - Booking details object
+ * @returns {Object} Template data object
  */
-function createTimeSlotSelectionTemplate(to, sport, date, duration, slots) {
-  // Ensure we don't exceed the 10 row limit
-  const limitedSlots = slots.slice(0, 10);
-  
+function createBookingConfirmationTemplate(bookingDetails) {
   return {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to,
-    type: 'interactive',
-    interactive: {
-      type: 'list',
-      header: {
-        type: 'text',
-        text: `${sport.charAt(0).toUpperCase() + sport.slice(1)} - ${date}`
-      },
-      body: {
-        text: `Available ${duration}-hour slots:`
-      },
-      footer: {
-        text: `${duration} hour booking - Select a time slot`
-      },
-      action: {
-        button: 'Select Time',
-        sections: [
-          {
-            title: 'Available Times',
-            rows: limitedSlots.map(slot => ({
-              id: `slot_${slot.id}`,
-              title: slot.time || slot.title,
-              description: slot.court ? `${slot.court} - ₹${slot.price}` : `₹${slot.price || ''}`
-            }))
-          }
-        ]
-      }
+    to: bookingDetails.phoneNumber,
+    type: 'text',
+    text: {
+      body: `🎉 Booking Confirmed! 🎉
+
+Thank you for your payment. Your booking is now confirmed.
+
+Booking ID: ${bookingDetails.bookingId}
+Sport: ${bookingDetails.sport}
+Date: ${bookingDetails.date}
+Time: ${bookingDetails.time} (${bookingDetails.duration} hour${bookingDetails.duration > 1 ? 's' : ''})
+Court: ${bookingDetails.court}
+
+Price Breakdown:
+Base Rate: ₹${bookingDetails.baseRate}
+${bookingDetails.discountAmount ? `Discount: ₹${bookingDetails.discountAmount} (${bookingDetails.discountPercent}%)\n` : ''}${bookingDetails.dayType && bookingDetails.timePeriod ? `${bookingDetails.dayType.charAt(0).toUpperCase() + bookingDetails.dayType.slice(1)} ${bookingDetails.timePeriod} rate applied\n` : ''}Total Paid: ₹${bookingDetails.totalPrice}
+
+We look forward to seeing you!`
     }
   };
 }
@@ -245,5 +240,5 @@ module.exports = {
   createBookingOptionsButtons,
   createBookingSummaryTemplate,
   createPaymentTemplate,
-  createTimeSlotSelectionTemplate
+  createBookingConfirmationTemplate
 };

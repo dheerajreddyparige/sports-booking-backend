@@ -79,7 +79,7 @@ sportConfigSchema.pre('save', function(next) {
   next();
 });
 
-// Create indexes for faster queries
-sportConfigSchema.index({ sport: 1 });
+// The sport field already has an index due to the unique constraint
+// No need for additional index creation
 
 module.exports = mongoose.model("SportConfig", sportConfigSchema);

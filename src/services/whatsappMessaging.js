@@ -126,22 +126,43 @@ async function sendBookingOptionsButtons(phoneNumber) {
  */
 async function processIncomingMessage(message) {
   try {
-    const { from, type, id } = message;
-    console.log(`🔄 Processing incoming ${type} message from ${from} with ID ${id}`);
+    const { from, type, id: messageId } = message;
+    console.log(`🔄 Processing incoming ${type} message from ${from} (ID: ${messageId})`);
     
-    // Check if this message has already been processed (prevent duplicates)
-    const FlowsState = require('../models/FlowsState');
+    // Connect to database
     const connectToDatabase = require('../utils/connect-to-database');
     await connectToDatabase();
     
-    const existingMessage = await FlowsState.findOne({ 'processedMessages': id });
-    if (existingMessage) {
-      console.log(`⚠️ Message ${id} has already been processed, skipping`);
-      return { success: true, skipped: true };
+    // Check if this message has already been processed
+    const FlowsState = require('../models/FlowsState');
+    const existingState = await FlowsState.findOne({
+      phoneNumber: from,
+      processedMessages: messageId
+    });
+    
+    if (existingState) {
+      console.log(`⚠️ Message ${messageId} has already been processed, skipping`);
+      return { success: false, reason: 'duplicate_message' };
     }
     
-    // Mark this message as processed
-    await FlowsState.updateMany({}, { $addToSet: { processedMessages: id } });
+    // Get or create flow state for this user
+    let flowState = await FlowsState.findOne({ phoneNumber: from }).sort({ updatedAt: -1 });
+    
+    if (!flowState) {
+      // Create new flow state
+      flowState = new FlowsState({
+        flowToken: `flow_${from}_${Date.now()}`,
+        phoneNumber: from,
+        screen: 'welcome',
+        processedMessages: [messageId]
+      });
+    } else {
+      // Add this message ID to processed messages
+      flowState.processedMessages.push(messageId);
+    }
+    
+    // Save flow state
+    await flowState.save();
     
     // Handle different message types
     if (type === 'text') {
@@ -151,9 +172,11 @@ async function processIncomingMessage(message) {
       // Check for keywords in the message
       if (messageText.includes('hello') || messageText.includes('hi') || messageText.includes('start')) {
         // Send only the welcome message with badminton image
-        // The welcome template should include all necessary information
-        // to avoid sending multiple separate messages
         await sendWelcomeMessage(from);
+        
+        // Update flow state
+        flowState.screen = 'welcome';
+        await flowState.save();
       }
     } else if (type === 'interactive') {
       const { interactive } = message;
@@ -165,6 +188,10 @@ async function processIncomingMessage(message) {
         if (buttonId === 'new_booking') {
           // Send sports selection list
           await sendSportsSelectionList(from);
+          
+          // Update flow state
+          flowState.screen = 'sport_selection';
+          await flowState.save();
         } else if (buttonId === 'view_bookings') {
           // Send message about viewing bookings
           await whatsappService.sendTextMessage(
@@ -183,31 +210,138 @@ async function processIncomingMessage(message) {
           // Extract the duration from the ID
           const duration = parseInt(buttonId.replace('duration_', ''));
           
-          // In a real implementation, you would retrieve these from a session or database
-          const sportId = 'badminton'; // Placeholder
-          const selectedDate = '2023-06-15'; // Placeholder
+          // Get sport and date from flow state
+          const sport = flowState.sport;
+          const selectedDate = flowState.date;
           
-          // Skip confirmation message and directly send available time slots
-          // to prevent duplicate messages
-          await sendAvailableTimeSlots(from, sportId, selectedDate, duration);
+          if (!sport || !selectedDate) {
+            await whatsappService.sendTextMessage(
+              from,
+              'Sorry, we couldn\'t find your sport or date selection. Please start over.'
+            );
+            return;
+          }
+          
+          // Update flow state
+          flowState.duration = duration;
+          flowState.screen = 'time_selection';
+          await flowState.save();
+          
+          // Send available time slots
+          await sendAvailableTimeSlots(from, sport, selectedDate, duration);
         }
         // Handle payment confirmation
         else if (buttonId === 'pay_now') {
           try {
-            // In a real implementation, you would retrieve the pending booking details from a session or database
-            // For now, we'll use placeholder data
+            // Get booking details from flow state
+            if (!flowState.sport || !flowState.date || !flowState.duration || !flowState.selectedSlotId) {
+              await whatsappService.sendTextMessage(
+                from,
+                'Sorry, we couldn\'t find your booking details. Please start over.'
+              );
+              return;
+            }
             
             // Create a booking record in the database
-            const bookingId = await createBooking(from, 'placeholder_slot_id');
+            const Booking = require('../models/Booking');
+            const Court = require('../models/Court').default;
             
-            // Get booking details for summary
-            const bookingDetails = await getBookingDetails('placeholder_slot_id');
+            // Find an available court for this sport
+            const courts = await Court.find({ sport: flowState.sport, isActive: true });
+            if (!courts || courts.length === 0) {
+              await whatsappService.sendTextMessage(
+                from,
+                `Sorry, no courts are available for ${flowState.sport}. Please try a different sport.`
+              );
+              return;
+            }
             
-            // Send confirmation message with pricing summary
-            await whatsappService.sendTextMessage(
-              from,
-              `Your payment was successful and your booking is confirmed!\n\nBooking ID: ${bookingId}\nSport: ${bookingDetails.sport}\nDate: ${bookingDetails.date}\nTime: ${bookingDetails.time} (${bookingDetails.duration} hour${bookingDetails.duration > 1 ? 's' : ''})\nCourt: ${bookingDetails.court}\n\nPrice Breakdown:\nBase Rate: ₹${bookingDetails.baseRate}\n${bookingDetails.discountAmount ? `Discount: ₹${bookingDetails.discountAmount} (${bookingDetails.discountPercent}%)\n` : ''}${bookingDetails.dayType && bookingDetails.timePeriod ? `${bookingDetails.dayType.charAt(0).toUpperCase() + bookingDetails.dayType.slice(1)} ${bookingDetails.timePeriod} rate applied\n` : ''}Total: ₹${bookingDetails.totalPrice}`
+            // Use the first available court
+            const court = courts[0];
+            
+            // Get selected time slot
+            const selectedSlot = flowState.availableSlots.find(slot => slot.id === flowState.selectedSlotId);
+            if (!selectedSlot) {
+              await whatsappService.sendTextMessage(
+                from,
+                'Sorry, we couldn\'t find your selected time slot. Please try again.'
+              );
+              return;
+            }
+            
+            // Parse time slot (format: "10:00")
+            const startTime = selectedSlot.id;
+            
+            // Calculate end time based on duration
+            const [startHour, startMinute] = startTime.split(':').map(Number);
+            const durationHours = flowState.duration;
+            const endHourDecimal = startHour + durationHours;
+            const endHour = Math.floor(endHourDecimal);
+            const endMinute = startMinute + ((endHourDecimal - endHour) * 60);
+            const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+            
+            // Create a new booking
+            const booking = new Booking({
+              userId: flowState.userId || 'guest',
+              sport: flowState.sport,
+              courtId: court.courtId,
+              date: new Date(flowState.date),
+              startTime,
+              endTime,
+              duration: durationHours,
+              amount: selectedSlot.price,
+              customerName: flowState.name || 'Guest',
+              customerEmail: flowState.email || '',
+              customerPhone: from,
+              specialRequirements: '',
+              status: 'confirmed',
+              paymentStatus: 'paid',
+              paymentMethod: 'razorpay',
+              createdAt: new Date(),
+              updatedAt: new Date()
+            });
+            
+            await booking.save();
+            
+            // Update flow state with booking ID
+            flowState.bookingId = booking._id.toString();
+            flowState.screen = 'booking_confirmed';
+            await flowState.save();
+            
+            // Get booking details for confirmation
+            const flowDbUtils = require('../utils/flowDbUtils');
+            const priceDetails = await flowDbUtils.calculatePrice(
+              flowState.sport,
+              flowState.duration,
+              flowState.date,
+              startTime
             );
+            
+            // Format booking details for confirmation message
+            const bookingDetails = {
+              bookingId: booking._id.toString(),
+              phoneNumber: from,
+              sport: flowState.sport.charAt(0).toUpperCase() + flowState.sport.slice(1),
+              date: new Date(flowState.date).toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                month: 'long', 
+                day: 'numeric' 
+              }),
+              time: selectedSlot.title,
+              duration: flowState.duration,
+              court: court.name,
+              baseRate: priceDetails.baseRate,
+              discountAmount: priceDetails.discountAmount,
+              discountPercent: priceDetails.discountPercent,
+              totalPrice: priceDetails.totalAmount,
+              dayType: priceDetails.dayType,
+              timePeriod: priceDetails.timePeriod
+            };
+            
+            // Send confirmation message
+            const messageTemplates = require('../utils/whatsappMessageTemplates');
+            const confirmationTemplate = messageTemplates.createBookingConfirmationTemplate(bookingDetails);
+            await whatsappService.sendRawMessage(confirmationTemplate);
           } catch (error) {
             console.error('❌ Error processing payment:', error);
             
@@ -217,6 +351,17 @@ async function processIncomingMessage(message) {
               'Sorry, we encountered an error while processing your payment. Please try again later.'
             );
           }
+        }
+        // Handle payment cancellation
+        else if (buttonId === 'cancel') {
+          await whatsappService.sendTextMessage(
+            from,
+            'Your booking has been cancelled. Feel free to start a new booking when you\'re ready!'
+          );
+          
+          // Update flow state
+          flowState.screen = 'cancelled';
+          await flowState.save();
         }
       }
       // Handle list replies
@@ -228,24 +373,29 @@ async function processIncomingMessage(message) {
             listItemId.startsWith('pickleball') || 
             listItemId.startsWith('cricket') || 
             listItemId.startsWith('football')) {
-          // Process selected sport
-          await processSelectedSport(from, listItemId);
+          // Extract sport from ID
+          const sport = listItemId.split('-')[0];
+          
+          // Update flow state
+          flowState.sport = sport;
+          flowState.screen = 'date_selection';
+          await flowState.save();
+          
+          // Send date selection calendar
+          await sendDateSelectionCalendar(from, sport);
         }
         // Check if this is a date selection
         else if (listItemId.startsWith('date_')) {
           // Extract the date from the ID
           const selectedDate = listItemId.replace('date_', '');
-          // Get the sport ID from user session/database (placeholder)
-          const sportId = 'badminton'; // This should come from a session or database
           
-          // Skip confirmation message
-          await whatsappService.sendTextMessage(
-            from,
-            `You've selected ${selectedDate}. Now let's choose how long you want to book.`
-          );
+          // Update flow state
+          flowState.date = selectedDate;
+          flowState.screen = 'duration_selection';
+          await flowState.save();
           
           // Send duration selection
-          await sendDurationSelection(from, sportId, selectedDate);
+          await sendDurationSelection(from, flowState.sport, selectedDate);
         }
         // Check if this is a time slot selection
         else if (listItemId.startsWith('slot_')) {
@@ -253,26 +403,60 @@ async function processIncomingMessage(message) {
           const slotId = listItemId.replace('slot_', '');
           
           try {
-            // Get booking details for the selected slot
-            const bookingDetails = await getBookingDetails(slotId);
+            // Find the selected slot in available slots
+            const selectedSlot = flowState.availableSlots.find(slot => slot.id === slotId);
             
-            // Store booking details in session/database for payment processing
-            // This would be implemented with a real session management system
-            // For now, we'll proceed directly to payment
+            if (!selectedSlot) {
+              await whatsappService.sendTextMessage(
+                from,
+                'Sorry, we couldn\'t find your selected time slot. Please try again.'
+              );
+              return;
+            }
             
-            // Send payment template with Razorpay integration
-            const paymentTemplate = whatsappMessageTemplates.createPaymentTemplate({
+            // Update flow state
+            flowState.selectedSlotId = slotId;
+            flowState.screen = 'payment';
+            await flowState.save();
+            
+            // Get booking details for payment template
+            const flowDbUtils = require('../utils/flowDbUtils');
+            const priceDetails = await flowDbUtils.calculatePrice(
+              flowState.sport,
+              flowState.duration,
+              flowState.date,
+              slotId
+            );
+            
+            // Format booking details for payment message
+            const bookingDetails = {
               phoneNumber: from,
-              sport: bookingDetails.sport,
-              date: bookingDetails.date,
-              time: bookingDetails.time,
-              duration: bookingDetails.duration,
-              totalPrice: bookingDetails.totalPrice
-            });
+              sport: flowState.sport.charAt(0).toUpperCase() + flowState.sport.slice(1),
+              date: new Date(flowState.date).toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                month: 'long', 
+                day: 'numeric' 
+              }),
+              time: selectedSlot.title,
+              duration: flowState.duration,
+              court: `${flowState.sport.charAt(0).toUpperCase() + flowState.sport.slice(1)} Court`,
+              baseRate: priceDetails.baseRate,
+              discountAmount: priceDetails.discountAmount,
+              discountPercent: priceDetails.discountPercent,
+              totalPrice: priceDetails.totalAmount
+            };
             
+            // Create payment details
+            const paymentDetails = {
+              orderId: `order_${Date.now()}`
+            };
+            
+            // Send payment template
+            const messageTemplates = require('../utils/whatsappMessageTemplates');
+            const paymentTemplate = messageTemplates.createPaymentTemplate(from, bookingDetails, paymentDetails);
             await whatsappService.sendRawMessage(paymentTemplate);
           } catch (error) {
-            console.error('❌ Error processing slot selection:', error);
+            console.error('❌ Error processing time slot selection:', error);
             
             // Send error message
             await whatsappService.sendTextMessage(
@@ -287,151 +471,6 @@ async function processIncomingMessage(message) {
     return { success: true };
   } catch (error) {
     console.error('❌ Error processing incoming message:', error);
-    throw error;
-  }
-}
-
-/**
- * Process selected sport from list
- * @param {string} phoneNumber - User's phone number
- * @param {string} sportId - Selected sport ID
- * @returns {Promise<Object>} - Response object
- */
-async function processSelectedSport(phoneNumber, sportId) {
-  try {
-    console.log(`🔄 Processing selected sport: ${sportId}`);
-    
-    // Store the selected sport in session or database
-    // This is a placeholder - in a real implementation, you would store this in a session or database
-    // For now, we'll just proceed to the next step in the booking flow
-    
-    // Skip confirmation message to avoid duplicate messages
-    
-    // Send date selection calendar
-    await sendDateSelectionCalendar(phoneNumber, sportId);
-    
-    return { success: true };
-  } catch (error) {
-    console.error('❌ Error processing selected sport:', error);
-    throw error;
-  }
-}
-
-/**
- * Sends a date selection calendar for booking
- * @param {string} phoneNumber - User's phone number
- * @param {string} sportId - Selected sport ID
- * @returns {Promise<Object>} - API response
- */
-async function sendDateSelectionCalendar(phoneNumber, sportId) {
-  try {
-    console.log('🔄 Sending date selection calendar...');
-    
-    // Get the next 7 days for selection
-    const dateOptions = generateDateOptions();
-    
-    // Create interactive list message for date selection
-    const dateSelectionMessage = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: phoneNumber,
-      type: 'interactive',
-      interactive: {
-        type: 'list',
-        header: {
-          type: 'text',
-          text: `Book ${sportId.charAt(0).toUpperCase() + sportId.slice(1)}`
-        },
-        body: {
-          text: 'Please select a date for your booking:'
-        },
-        footer: {
-          text: 'Available dates for the next 7 days'
-        },
-        action: {
-          button: 'Select Date',
-          sections: [
-            {
-              title: 'Available Dates',
-              rows: dateOptions
-            }
-          ]
-        }
-      }
-    };
-    
-    // Send interactive message directly using the WhatsApp API
-    const response = await whatsappService.sendRawMessage(dateSelectionMessage);
-    
-    console.log('✅ Date selection calendar sent successfully:', response);
-    return response;
-  } catch (error) {
-    console.error('❌ Error sending date selection calendar:', error);
-    throw error;
-  }
-}
-
-/**
- * Sends duration selection options
- * @param {string} phoneNumber - User's phone number
- * @param {string} sportId - Selected sport ID
- * @param {string} selectedDate - Selected date
- * @returns {Promise<Object>} - API response
- */
-async function sendDurationSelection(phoneNumber, sportId, selectedDate) {
-  try {
-    console.log('🔄 Sending duration selection options...');
-    
-    // Create interactive buttons message for duration selection
-    const durationMessage = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: phoneNumber,
-      type: 'interactive',
-      interactive: {
-        type: 'button',
-        header: {
-          type: 'text',
-          text: `${sportId.charAt(0).toUpperCase() + sportId.slice(1)} - ${selectedDate}`
-        },
-        body: {
-          text: 'How many hours would you like to book?'
-        },
-        action: {
-          buttons: [
-            {
-              type: 'reply',
-              reply: {
-                id: 'duration_1',
-                title: '1 Hour'
-              }
-            },
-            {
-              type: 'reply',
-              reply: {
-                id: 'duration_2',
-                title: '2 Hours'
-              }
-            },
-            {
-              type: 'reply',
-              reply: {
-                id: 'duration_3',
-                title: '3 Hours'
-              }
-            }
-          ]
-        }
-      }
-    };
-    
-    // Send interactive message directly using the WhatsApp API
-    const response = await whatsappService.sendRawMessage(durationMessage);
-    
-    console.log('✅ Duration selection options sent successfully:', response);
-    return response;
-  } catch (error) {
-    console.error('❌ Error sending duration selection options:', error);
     throw error;
   }
 }
@@ -482,8 +521,14 @@ async function sendAvailableTimeSlots(phoneNumber, sportId, selectedDate, durati
       }
     }));
     
+    // Filter out disabled slots
+    const enabledSlots = slotsWithPricing.filter(slot => {
+      const originalSlot = availableSlots.find(s => s.id === slot.id);
+      return originalSlot && originalSlot.enabled;
+    });
+    
     // Create rows for each available time slot - limit to 10 rows maximum (WhatsApp limit)
-    const slotRows = slotsWithPricing.slice(0, 10).map(slot => ({
+    const slotRows = enabledSlots.slice(0, 10).map(slot => ({
       id: `slot_${slot.id}`,
       title: slot.title,
       description: `₹${slot.price}`
@@ -799,6 +844,154 @@ async function getBookingDetails(slotId) {
   }
 }
 
+/**
+ * Sends a date selection calendar for a specific sport
+ * @param {string} phoneNumber - Recipient's phone number
+ * @param {string} sport - Selected sport
+ * @returns {Promise<Object>} - API response
+ */
+async function sendDateSelectionCalendar(phoneNumber, sport) {
+  try {
+    console.log('🔄 Sending date selection calendar...');
+    
+    // Get available dates from database using flowDbUtils
+    const flowDbUtils = require('../utils/flowDbUtils');
+    const availableDates = await flowDbUtils.getAvailableDates();
+    
+    if (!availableDates || availableDates.length === 0) {
+      // If no dates are available, send a message and return
+      await whatsappService.sendTextMessage(
+        phoneNumber,
+        `Sorry, there are no available dates for ${sport} at the moment. Please try again later.`
+      );
+      return { success: false, reason: 'no_dates_available' };
+    }
+    
+    // Create rows for each available date - limit to 10 rows maximum (WhatsApp limit)
+    const dateRows = availableDates.slice(0, 10).map(date => ({
+      id: `date_${date.id}`,
+      title: date.title,
+      description: `Available for ${sport}`
+    }));
+    
+    // Create interactive list message for date selection
+    const dateSelectionMessage = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phoneNumber,
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        header: {
+          type: 'text',
+          text: `${sport.charAt(0).toUpperCase() + sport.slice(1)} Booking`
+        },
+        body: {
+          text: 'Please select a date for your booking:'
+        },
+        footer: {
+          text: 'Select a date to continue'
+        },
+        action: {
+          button: 'Select Date',
+          sections: [
+            {
+              title: 'Available Dates',
+              rows: dateRows
+            }
+          ]
+        }
+      }
+    };
+    
+    // Send interactive message directly using the WhatsApp API
+    const response = await whatsappService.sendRawMessage(dateSelectionMessage);
+    
+    console.log('✅ Date selection calendar sent successfully:', response);
+    return { success: true, response };
+  } catch (error) {
+    console.error('❌ Error sending date selection calendar:', error);
+    throw error;
+  }
+}
+
+/**
+ * Sends duration selection options for a specific sport and date
+ * @param {string} phoneNumber - Recipient's phone number
+ * @param {string} sport - Selected sport
+ * @param {string} selectedDate - Selected date
+ * @returns {Promise<Object>} - API response
+ */
+async function sendDurationSelection(phoneNumber, sport, selectedDate) {
+  try {
+    console.log('🔄 Sending duration selection options...');
+    
+    // Get available durations from database or use default options
+    // For now, we'll use fixed options: 1, 2, and 3 hours
+    const durationOptions = [
+      { id: 'duration_1', title: '1 Hour', description: 'Standard booking' },
+      { id: 'duration_2', title: '2 Hours', description: 'Extended booking' },
+      { id: 'duration_3', title: '3 Hours', description: 'Long session' }
+    ];
+    
+    // Create interactive buttons message for duration selection
+    const durationMessage = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phoneNumber,
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        header: {
+          type: 'text',
+          text: `${sport.charAt(0).toUpperCase() + sport.slice(1)} - ${selectedDate}`
+        },
+        body: {
+          text: 'How long would you like to book the court for?'
+        },
+        footer: {
+          text: 'Select a duration to continue'
+        },
+        action: {
+          buttons: [
+            {
+              type: 'reply',
+              reply: {
+                id: 'duration_1',
+                title: '1 Hour'
+              }
+            },
+            {
+              type: 'reply',
+              reply: {
+                id: 'duration_2',
+                title: '2 Hours'
+              }
+            },
+            {
+              type: 'reply',
+              reply: {
+                id: 'duration_3',
+                title: '3 Hours'
+              }
+            }
+          ]
+        }
+      }
+    };
+    
+    // Send interactive message directly using the WhatsApp API
+    const response = await whatsappService.sendRawMessage(durationMessage);
+    
+    console.log('✅ Duration selection options sent successfully:', response);
+    return { success: true, response };
+  } catch (error) {
+    console.error('❌ Error sending duration selection options:', error);
+    throw error;
+  }
+}
+
+// Make sure to export the function at the end of the file
 module.exports = {
   sendWelcomeMessage,
   sendSportsSelectionList,

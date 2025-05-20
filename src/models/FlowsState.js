@@ -1,27 +1,64 @@
 const mongoose = require('mongoose');
 
 const flowsStateSchema = new mongoose.Schema({
-  flowToken: { type: String, required: true, unique: true },
-  screen: { type: String, required: true },
-  data: { type: Object, default: {} },
-  // Fields for WhatsApp booking flow
-  sport: { type: String },
-  date: { type: String },
-  duration: { type: Number },
-  time_slot: { type: String },
-  time_slots: { type: String },
-  availableSlots: { type: Array, default: [] },
-  // Message tracking to prevent duplicate processing
-  processedMessages: { type: [String], default: [] },
+  // Unique token for the flow session
+  flowToken: {
+    type: String,
+    required: true,
+    unique: true,
+    index: true
+  },
+  
+  // Current screen in the flow
+  screen: {
+    type: String
+  },
+  
+  // User's phone number
+  phoneNumber: {
+    type: String,
+    index: true
+  },
+  
+  // Booking information
+  sport: String,
+  date: String,
+  duration: Number,
+  timeSlot: String,
+  
+  // Array of processed message IDs to prevent duplicate processing
+  processedMessages: [String],
+  
+  // Available slots for the current booking session
+  availableSlots: [{
+    id: String,
+    title: String,
+    price: Number
+  }],
+  
+  // Selected slot ID
+  selectedSlotId: String,
+  
+  // Payment information
+  paymentId: String,
+  paymentStatus: String,
+  
+  // Booking ID if created
+  bookingId: String,
+  
   // Timestamps
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
-  expiresAt: { type: Date, default: () => new Date(Date.now() + 30 * 60 * 1000) } // 30 minute timeout
-}); 
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
 
-// Add index for faster lookups
-flowsStateSchema.index({ 'processedMessages': 1 });
-flowsStateSchema.index({ 'availableSlots.id': 1 });
+// Create indexes for faster lookups
+flowsStateSchema.index({ phoneNumber: 1, updatedAt: -1 });
+flowsStateSchema.index({ updatedAt: 1 });
 
-
-module.exports = mongoose.model("FlowsState", flowsStateSchema);
+module.exports = mongoose.model('FlowsState', flowsStateSchema);

@@ -290,7 +290,11 @@ const getNextScreen = async (decryptedBody) => {
                 mergedData.date,
                 mergedData.duration
               );
-              console.log(`✅ Filtered ${timeSlots.length} time slots for ${mergedData.time_of_day}`);
+              // Update timeSlots with the fetched slots
+              if (allSlots && allSlots.length > 0) {
+                timeSlots = allSlots;
+              }
+              console.log(`✅ Found ${timeSlots.length} time slots for ${mergedData.time_of_day}`);
             } catch (error) {
               console.error('❌ Error fetching time slots:', error);
             }

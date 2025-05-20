@@ -56,7 +56,8 @@ async function getFlowState(flowToken) {
 }
 
 /**
- * Get available sports facilities
+ * Get available sports facilities from database
+ * @returns {Array} Array of sports with their courts
  */
 async function getSportsFacilities() {
   console.log('🔍 Getting sports facilities...');
@@ -65,6 +66,10 @@ async function getSportsFacilities() {
   try {
     const courts = await Court.find({ isActive: true });
     console.log(`📋 Found ${courts.length} active courts`);
+    
+    if (!courts || courts.length === 0) {
+      throw new Error('No active courts found in database');
+    }
     
     // Group courts by sport
     const sportsFacilities = courts.reduce((acc, court) => {
@@ -78,16 +83,24 @@ async function getSportsFacilities() {
       return acc;
     }, {});
     
-    // Format for WhatsApp Flows
-    return Object.entries(sportsFacilities).map(([sport, courts]) => ({
-      id: sport,
-      title: sport.charAt(0).toUpperCase() + sport.slice(1),
-      courts: courts
-    }));
+    // Format for WhatsApp Flows - limit to 10 sports max (WhatsApp limit)
+    const formattedSports = Object.entries(sportsFacilities)
+      .slice(0, 10)
+      .map(([sport, courts]) => ({
+        id: sport,
+        title: sport.charAt(0).toUpperCase() + sport.slice(1),
+        courts: courts
+      }));
+    
+    if (formattedSports.length === 0) {
+      throw new Error('No sports facilities available after formatting');
+    }
+    
+    return formattedSports;
   } catch (error) {
     console.error('❌ Error getting sports facilities:', error);
-    // Return default sports if database fails
-    console.log('⚠️ Using default sports facilities');
+    // Return default sports if database fails - but log the error clearly
+    console.log('⚠️ Using default sports facilities due to error:', error.message);
     return [
       { id: 'badminton', title: 'Badminton', courts: [{id: 'badminton-1', title: 'Badminton Court 1'}] },
       { id: 'cricket', title: 'Cricket', courts: [{id: 'cricket-1', title: 'Cricket Ground'}] },
@@ -98,6 +111,7 @@ async function getSportsFacilities() {
 
 /**
  * Get available dates (next 7 days)
+ * @returns {Array} Array of date objects with id and title
  */
 async function getAvailableDates() {
   const dates = [];
@@ -123,16 +137,84 @@ async function getAvailableDates() {
  * Get available time slots for a specific sport and date
  * @param {string} sport - Sport type (badminton, cricket, etc.)
  * @param {string} date - Date in YYYY-MM-DD format
- * @param {string} duration - Duration in hours
+ * @param {number} duration - Duration in hours
  * @param {string} timeOfDay - Optional: "morning" or "evening"
+ * @returns {Array} Array of available time slots
  */
-const getAvailableTimeSlots = async (sport, date, duration, timeOfDay) => {
+async function getAvailableTimeSlots(sport, date, duration, timeOfDay) {
   console.log('🔍 Getting available time slots:', { sport, date, duration, timeOfDay });
+  await connectToDatabase();
+  
   try {
-    const slots = await slotUtils.getAvailableSlots(sport, date, duration);
+    // Validate inputs
+    if (!sport || !date || !duration) {
+      throw new Error('Missing required parameters: sport, date, or duration');
+    }
+    
+    // Convert duration to number if it's a string
+    const durationHours = typeof duration === 'string' ? parseInt(duration, 10) : duration;
+    
+    // Get sport configuration for operating hours
+    const sportConfig = await getSportConfig(sport);
+    if (!sportConfig) {
+      throw new Error(`Sport configuration not found for ${sport}`);
+    }
+    
+    // Get existing bookings for this date and sport
+    const bookings = await Booking.find({
+      sport: sport,
+      date: new Date(date),
+      status: { $nin: ['cancelled', 'rejected'] }
+    });
+    
+    // Get available courts for this sport
+    const courts = await Court.find({ sport: sport, isActive: true });
+    if (!courts || courts.length === 0) {
+      throw new Error(`No active courts found for sport: ${sport}`);
+    }
+    
+    // Get all possible time slots for this sport
+    const openTime = sportConfig.availableTimes?.openTime || "05:00";
+    const closeTime = sportConfig.availableTimes?.closeTime || "23:00";
+    
+    // Generate all possible time slots
+    const allSlots = generateTimeSlots(openTime, closeTime, durationHours);
+    
+    // Mark slots as unavailable if all courts are booked
+    const availableSlots = allSlots.map(slot => {
+      const [startHour, startMinute] = slot.id.split(':').map(Number);
+      const startDateTime = new Date(date);
+      startDateTime.setHours(startHour, startMinute, 0, 0);
+      
+      const endDateTime = new Date(startDateTime);
+      endDateTime.setHours(startDateTime.getHours() + durationHours);
+      
+      // Check if all courts are booked for this time slot
+      const conflictingBookings = bookings.filter(booking => {
+        const bookingStart = new Date(booking.date);
+        const [bStartHour, bStartMinute] = booking.startTime.split(':').map(Number);
+        bookingStart.setHours(bStartHour, bStartMinute, 0, 0);
+        
+        const bookingEnd = new Date(bookingStart);
+        bookingEnd.setHours(bookingStart.getHours() + booking.duration);
+        
+        // Check if booking overlaps with this slot
+        return (
+          (startDateTime < bookingEnd && endDateTime > bookingStart)
+        );
+      });
+      
+      // Slot is available if there are fewer conflicting bookings than courts
+      const isAvailable = conflictingBookings.length < courts.length;
+      
+      return {
+        ...slot,
+        enabled: isAvailable
+      };
+    });
     
     // Filter slots based on time of day if specified
-    let filteredSlots = slots.filter(slot => slot.enabled);
+    let filteredSlots = availableSlots.filter(slot => slot.enabled);
     
     if (timeOfDay) {
       if (timeOfDay === "morning") {
@@ -156,60 +238,73 @@ const getAvailableTimeSlots = async (sport, date, duration, timeOfDay) => {
       }
     }
     
-    // Limit to 20 options per time of day
-    const formattedSlots = filteredSlots.slice(0, 20).map(slot => ({
+    // Format slots for display - limit to 10 for WhatsApp
+    const formattedSlots = filteredSlots.slice(0, 10).map(slot => ({
       id: slot.id,
       title: slot.title
     }));
     
-    // Ensure we have at least 2 slots (WhatsApp Flow requirement)
-    if (formattedSlots.length < 2) {
-      if (timeOfDay === "morning") {
-        return [
-          { id: "09:00", title: "9:00 AM - 10:00 AM" },
-          { id: "10:00", title: "10:00 AM - 11:00 AM" }
-        ];
-      } else if (timeOfDay === "evening") {
-        return [
-          { id: "17:00", title: "5:00 PM - 6:00 PM" },
-          { id: "18:00", title: "6:00 PM - 7:00 PM" }
-        ];
-      } else {
-        return [
-          { id: "09:00", title: "9:00 AM - 10:00 AM" },
-          { id: "17:00", title: "5:00 PM - 6:00 PM" }
-        ];
-      }
+    // If no slots available, return empty array
+    if (formattedSlots.length === 0) {
+      console.log('⚠️ No available time slots found');
+      return [];
     }
     
+    console.log(`✅ Found ${formattedSlots.length} available time slots`);
     return formattedSlots;
   } catch (error) {
-    console.error('❌ Error in getAvailableTimeSlots:', error);
-    // Return default slots based on time of day
-    if (timeOfDay === "morning") {
-      return [
-        { id: "09:00", title: "9:00 AM - 10:00 AM" },
-        { id: "10:00", title: "10:00 AM - 11:00 AM" }
-      ];
-    } else if (timeOfDay === "afternoon") {
-      return [
-        { id: "13:00", title: "1:00 PM - 2:00 PM" },
-        { id: "15:00", title: "3:00 PM - 4:00 PM" }
-      ];
-    } else if (timeOfDay === "evening") {
-      return [
-        { id: "17:00", title: "5:00 PM - 6:00 PM" },
-        { id: "18:00", title: "6:00 PM - 7:00 PM" }
-      ];
-    } else {
-      return [
-        { id: "09:00", title: "9:00 AM - 10:00 AM" },
-        { id: "13:00", title: "1:00 PM - 2:00 PM" },
-        { id: "17:00", title: "5:00 PM - 6:00 PM" }
-      ];
-    }
+    console.error('❌ Error getting available time slots:', error);
+    // Don't return fallback data - let the caller handle the empty result
+    return [];
   }
-};
+}
+
+/**
+ * Helper function to generate time slots
+ * @param {string} openTime - Opening time (HH:MM)
+ * @param {string} closeTime - Closing time (HH:MM)
+ * @param {number} duration - Duration in hours
+ * @returns {Array} Array of time slots
+ */
+function generateTimeSlots(openTime, closeTime, duration) {
+  const slots = [];
+  const [openHour, openMinute] = openTime.split(':').map(Number);
+  const [closeHour, closeMinute] = closeTime.split(':').map(Number);
+  
+  // Convert to minutes for easier calculation
+  const openMinutes = openHour * 60 + openMinute;
+  const closeMinutes = closeHour * 60 + closeMinute;
+  const durationMinutes = duration * 60;
+  
+  // Generate slots at 30-minute intervals
+  for (let time = openMinutes; time <= closeMinutes - durationMinutes; time += 30) {
+    const hour = Math.floor(time / 60);
+    const minute = time % 60;
+    
+    const endTime = time + durationMinutes;
+    const endHour = Math.floor(endTime / 60);
+    const endMinute = endTime % 60;
+    
+    const startTimeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+    const endTimeStr = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+    
+    // Format time for display (12-hour format)
+    const startHour12 = hour % 12 || 12;
+    const startAmPm = hour < 12 ? 'AM' : 'PM';
+    const endHour12 = endHour % 12 || 12;
+    const endAmPm = endHour < 12 ? 'AM' : 'PM';
+    
+    const title = `${startHour12}:${minute.toString().padStart(2, '0')} ${startAmPm} - ${endHour12}:${endMinute.toString().padStart(2, '0')} ${endAmPm}`;
+    
+    slots.push({
+      id: startTimeStr,
+      title: title,
+      enabled: true
+    });
+  }
+  
+  return slots;
+}
 
 /**
  * Get time slots for a specific sport, date and duration
@@ -234,6 +329,11 @@ async function get_time_slots(params) {
   return slots;
 }
 
+/**
+ * Create a booking from flow state
+ * @param {Object} flowState - Flow state object
+ * @returns {Object} Created booking
+ */
 async function createBookingFromFlow(flowState) {
   console.log('📝 Creating booking from flow state:', flowState);
   await connectToDatabase();
@@ -250,7 +350,7 @@ async function createBookingFromFlow(flowState) {
       throw new Error('Missing required booking fields: sport, time_slots, date, or duration');
     }
     
-    // Extract sport (no longer combined with courtId in new structure)
+    // Extract sport
     const sport = flowState.sport;
     
     // Find an available court for this sport
@@ -258,32 +358,52 @@ async function createBookingFromFlow(flowState) {
     if (!courts || courts.length === 0) {
       throw new Error(`No available courts found for sport: ${sport}`);
     }
-    const courtId = courts[0].courtId; // Use the first available court
     
-    // Parse time slot (format: "10:00-11:30")
-    const timeSlotParts = flowState.time_slots.split('-');
-    const startTime = timeSlotParts[0];
-    const endTime = timeSlotParts[1];
+    // Find first available court
+    let selectedCourt = null;
+    for (const court of courts) {
+      // Check if court is available for this time slot
+      const isAvailable = await isCourtAvailable(
+        court.courtId, 
+        flowState.date, 
+        flowState.time_slots, 
+        flowState.duration
+      );
+      
+      if (isAvailable) {
+        selectedCourt = court;
+        break;
+      }
+    }
     
-    // Alternative calculation if time_slots doesn't contain end time
-    // const startTime = flowState.time_slots;
-    // const [startHour, startMinute] = startTime.split(':').map(Number);
-    // const durationHours = parseFloat(flowState.duration);
-    // const endHourDecimal = startHour + durationHours;
-    // const endHour = Math.floor(endHourDecimal);
-    // const endMinute = startMinute + ((endHourDecimal - endHour) * 60);
-    // const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+    if (!selectedCourt) {
+      throw new Error(`No available courts found for the selected time slot`);
+    }
+    
+    // Parse time slot
+    const startTime = flowState.time_slots;
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    const durationHours = parseFloat(flowState.duration);
+    
+    // Calculate end time
+    const endHourDecimal = startHour + durationHours;
+    const endHour = Math.floor(endHourDecimal);
+    const endMinute = startMinute + ((endHourDecimal - endHour) * 60);
+    const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+    
+    // Calculate price
+    const priceDetails = await calculatePrice(sport, durationHours, flowState.date, startTime);
     
     // Create a new booking
     const booking = new Booking({
       userId: flowState.userId || 'guest',
       sport,
-      courtId,
+      courtId: selectedCourt.courtId,
       date: new Date(flowState.date),
       startTime,
       endTime,
-      duration: parseFloat(flowState.duration),
-      amount: parseFloat(flowState.total_amount || 0),
+      duration: durationHours,
+      amount: priceDetails.totalAmount,
       customerName: flowState.name || 'Guest',
       customerEmail: flowState.email || '',
       customerPhone: flowState.phone || '',
@@ -296,6 +416,7 @@ async function createBookingFromFlow(flowState) {
     });
     
     await booking.save();
+    console.log('✅ Booking created successfully:', booking._id);
     return booking;
   } catch (error) {
     console.error('❌ Error creating booking from flow:', error);
@@ -304,8 +425,58 @@ async function createBookingFromFlow(flowState) {
 }
 
 /**
+ * Check if a court is available for a specific time slot
+ * @param {string} courtId - Court ID
+ * @param {string} date - Date in YYYY-MM-DD format
+ * @param {string} startTime - Start time in HH:MM format
+ * @param {number} duration - Duration in hours
+ * @returns {boolean} True if court is available
+ */
+async function isCourtAvailable(courtId, date, startTime, duration) {
+  try {
+    // Convert duration to number if it's a string
+    const durationHours = typeof duration === 'string' ? parseFloat(duration) : duration;
+    
+    // Parse start time
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    
+    // Calculate end time
+    const endHourDecimal = startHour + durationHours;
+    const endHour = Math.floor(endHourDecimal);
+    const endMinute = startMinute + ((endHourDecimal - endHour) * 60);
+    const endTimeStr = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+    
+    // Find conflicting bookings
+    const bookings = await Booking.find({
+      courtId: courtId,
+      date: new Date(date),
+      status: { $nin: ['cancelled', 'rejected'] }
+    });
+    
+    // Check for conflicts
+    for (const booking of bookings) {
+      const bookingStart = booking.startTime;
+      const bookingEnd = booking.endTime;
+      
+      // Check if booking overlaps with requested time
+      if (
+        (startTime < bookingEnd && endTimeStr > bookingStart)
+      ) {
+        return false; // Court is not available
+      }
+    }
+    
+    return true; // Court is available
+  } catch (error) {
+    console.error('❌ Error checking court availability:', error);
+    return false; // Assume court is not available on error
+  }
+}
+
+/**
  * Get sport configuration by sport type
  * @param {string} sport - Sport type (badminton, cricket, pickleball)
+ * @returns {Object} Sport configuration
  */
 async function getSportConfig(sport) {
   console.log(`🔍 Getting configuration for sport: ${sport}`);
@@ -332,7 +503,17 @@ async function getSportConfig(sport) {
           openTime: "05:00",
           closeTime: "23:00"
         },
-        maxBookingDays: 7
+        maxBookingDays: 7,
+        pricingRates: {
+          weekday: {
+            morning: sport === 'cricket' ? 600 : sport === 'pickleball' ? 350 : 400,
+            evening: sport === 'cricket' ? 750 : sport === 'pickleball' ? 450 : 500
+          },
+          weekend: {
+            morning: sport === 'cricket' ? 750 : sport === 'pickleball' ? 450 : 500,
+            evening: sport === 'cricket' ? 900 : sport === 'pickleball' ? 550 : 600
+          }
+        }
       };
     }
   } catch (error) {
@@ -350,7 +531,17 @@ async function getSportConfig(sport) {
         openTime: "05:00",
         closeTime: "23:00"
       },
-      maxBookingDays: 7
+      maxBookingDays: 7,
+      pricingRates: {
+        weekday: {
+          morning: sport === 'cricket' ? 600 : sport === 'pickleball' ? 350 : 400,
+          evening: sport === 'cricket' ? 750 : sport === 'pickleball' ? 450 : 500
+        },
+        weekend: {
+          morning: sport === 'cricket' ? 750 : sport === 'pickleball' ? 450 : 500,
+          evening: sport === 'cricket' ? 900 : sport === 'pickleball' ? 550 : 600
+        }
+      }
     };
   }
 }
@@ -358,27 +549,37 @@ async function getSportConfig(sport) {
 /**
  * Calculate price for a booking based on sport, duration, date, and time
  * @param {string} sport - Sport type
- * @param {string} duration - Duration in hours
+ * @param {number} duration - Duration in hours
  * @param {string} date - Booking date (YYYY-MM-DD format)
  * @param {string} startTime - Booking start time (HH:MM format)
+ * @returns {Object} Price details
  */
 async function calculatePrice(sport, duration, date, startTime) {
   console.log(`💰 Calculating price for ${sport}, duration: ${duration}, date: ${date}, time: ${startTime}`);
   
   try {
+    // Validate inputs
+    if (!sport || !duration || !date || !startTime) {
+      throw new Error('Missing required parameters for price calculation');
+    }
+    
+    // Get sport configuration
     const config = await getSportConfig(sport);
-    const durationHours = parseFloat(duration);
+    if (!config) {
+      throw new Error(`Sport configuration not found for ${sport}`);
+    }
+    
+    // Convert duration to number if it's a string
+    const durationHours = typeof duration === 'string' ? parseFloat(duration) : duration;
     
     // Determine if booking is on a weekend
-    const bookingDate = date ? new Date(date) : new Date();
+    const bookingDate = new Date(date);
     const dayOfWeek = bookingDate.getDay(); // 0 = Sunday, 6 = Saturday
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
     
     // Determine if booking is in morning or evening
-    const bookingHour = startTime ? parseInt(startTime.split(':')[0], 10) : new Date().getHours();
-    const morningStartHour = parseInt(config.timePeriods?.morning?.startTime?.split(':')[0] || '05', 10);
-    const eveningStartHour = parseInt(config.timePeriods?.evening?.startTime?.split(':')[0] || '17', 10);
-    const isEvening = bookingHour >= eveningStartHour;
+    const bookingHour = parseInt(startTime.split(':')[0], 10);
+    const isEvening = bookingHour >= 17; // 5 PM and later
     
     // Get appropriate rate based on day and time
     let baseRate;
@@ -400,11 +601,11 @@ async function calculatePrice(sport, duration, date, startTime) {
     // Calculate discount percentage based on duration
     let discountPercent = 0;
     if (durationHours >= 4) {
-      discountPercent = config.discounts.fourHour;
+      discountPercent = config.discounts?.fourHour || 15;
     } else if (durationHours >= 3) {
-      discountPercent = config.discounts.threeHour;
+      discountPercent = config.discounts?.threeHour || 10;
     } else if (durationHours >= 2) {
-      discountPercent = config.discounts.twoHour;
+      discountPercent = config.discounts?.twoHour || 5;
     }
     
     // Calculate total amount
@@ -416,7 +617,7 @@ async function calculatePrice(sport, duration, date, startTime) {
     const timePeriod = isEvening ? 'evening' : 'morning';
     const dayType = isWeekend ? 'weekend' : 'weekday';
     
-    console.log(`💰 Price calculation: Base rate: ${baseRate} (${dayType} ${timePeriod}), Duration: ${durationHours}h, Discount: ${discountPercent}%, Total: ${totalAmount}`);
+    console.log(`💰 Price calculation: Base rate: ${baseRate} (${dayType} ${timePeriod}), Duration: ${durationHours}h, Discount: ${discountPercent}%, Total: ${Math.round(totalAmount)}`);
     
     return {
       baseRate,
@@ -429,9 +630,11 @@ async function calculatePrice(sport, duration, date, startTime) {
     };
   } catch (error) {
     console.error('❌ Error calculating price:', error);
-    // Fallback calculation
+    // Fallback calculation with clear error logging
+    console.error('Using fallback price calculation due to error:', error.message);
+    
     const baseRate = sport === 'cricket' ? 600 : sport === 'pickleball' ? 350 : 400;
-    const durationHours = parseFloat(duration);
+    const durationHours = typeof duration === 'string' ? parseFloat(duration) : duration;
     
     // Apply time and day based pricing even in fallback
     const bookingDate = date ? new Date(date) : new Date();
@@ -487,5 +690,6 @@ module.exports = {
   getAvailableTimeSlots,
   getSportConfig,
   calculatePrice,
-  createBookingFromFlow
+  createBookingFromFlow,
+  get_time_slots
 };
