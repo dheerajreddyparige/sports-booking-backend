@@ -270,34 +270,227 @@ const getNextScreen = async (decryptedBody) => {
             {"id": "3.5", "title": "3.5 Hours", "description":"","metadata": `${sportConfig.discounts.threeHour}% off` },
             {"id": "4", "title": "4 Hours", "description":"","metadata": `${sportConfig.discounts.fourHour}% off` }
           ];
-           let timeSlots = [
-            { id: "09:00-10:00", title: "9:00 AM - 10:00 AM","enabled": false },
-            { id: "17:00-18:00", title: "5:00 PM - 6:00 PM" }
+           // Default time slots (to avoid ChipsSelector error)
+          let timeSlots = [
+            { id: "09:00", title: "9:00 AM" },
+            { id: "17:00", title: "5:00 PM" }
           ];
           
-          if (mergedData.sport && mergedData.date && mergedData.duration && mergedData.time_of_day) {
+          // Navigation options for time slots
+          let timeSlotOptions = [];
+          let currentPage = 0;
+          
+          if (mergedData.sport && mergedData.date && mergedData.duration) {
             console.log('🕒 Fetching time slots with params:', {
               sport: mergedData.sport,
               date: mergedData.date,
               duration: mergedData.duration,
-              timeOfDay: mergedData.time_of_day
+              timeOfDay: mergedData.time_of_day || 'all',
+              page: mergedData.page || 0
             });
             
             try {
-              // Get all available slots
-              const allSlots = await flowDbUtils.getAvailableTimeSlots(
+              // Get page number from data if available
+              currentPage = mergedData.page || 0;
+              
+              // Get all available slots with pagination
+              const slotsResult = await flowDbUtils.getAvailableTimeSlots(
                 mergedData.sport,
                 mergedData.date,
-                mergedData.duration
+                mergedData.duration,
+                mergedData.time_of_day,
+                currentPage
               );
+              
               // Update timeSlots with the fetched slots
-              if (allSlots && allSlots.length > 0) {
-                timeSlots = allSlots;
+              if (slotsResult.slots && slotsResult.slots.length > 0) {
+                timeSlots = slotsResult.slots;
+                
+                // Add navigation options if needed
+                if (slotsResult.pagination.hasMorePages) {
+                  timeSlotOptions.push({
+                    id: `page_${currentPage + 1}`,
+                    title: "Show More Time Slots",
+                    description: "View next page of available times"
+                  });
+                }
+                
+                if (slotsResult.pagination.hasPreviousPages) {
+                  timeSlotOptions.push({
+                    id: `page_${currentPage - 1}`,
+                    title: "Show Previous Time Slots",
+                    description: "View previous page of available times"
+                  });
+                }
+                
+                // Add time of day filter options if there are slots in those periods
+                if (!mergedData.time_of_day) {
+                  if (slotsResult.timeOfDayCounts.morning > 0) {
+                    timeSlotOptions.push({
+                      id: "filter_morning",
+                      title: "Morning Slots",
+                      description: `${slotsResult.timeOfDayCounts.morning} slots available`
+                    });
+                  }
+                  
+                  if (slotsResult.timeOfDayCounts.afternoon > 0) {
+                    timeSlotOptions.push({
+                      id: "filter_afternoon",
+                      title: "Afternoon Slots",
+                      description: `${slotsResult.timeOfDayCounts.afternoon} slots available`
+                    });
+                  }
+                  
+                  if (slotsResult.timeOfDayCounts.evening > 0) {
+                    timeSlotOptions.push({
+                      id: "filter_evening",
+                      title: "Evening Slots",
+                      description: `${slotsResult.timeOfDayCounts.evening} slots available`
+                    });
+                  }
+                } else {
+                  // Option to view all time slots
+                  timeSlotOptions.push({
+                    id: "filter_all",
+                    title: "View All Time Slots",
+                    description: "Remove time of day filter"
+                  });
+                }
+                
+                // Always add option to change date
+                timeSlotOptions.push({
+                  id: "change_date",
+                  title: "Change Date",
+                  description: "Select a different date"
+                });
+              } else if (slotsResult.timeOfDayCounts) {
+                // No slots on current page, but slots might exist in other time periods
+                const { morning, afternoon, evening } = slotsResult.timeOfDayCounts;
+                const totalSlots = morning + afternoon + evening;
+                
+                if (totalSlots > 0) {
+                  // Add time of day options if there are slots in those periods
+                  if (morning > 0) {
+                    timeSlotOptions.push({
+                      id: "filter_morning",
+                      title: "Morning Slots",
+                      description: `${morning} slots available`
+                    });
+                  }
+                  
+                  if (afternoon > 0) {
+                    timeSlotOptions.push({
+                      id: "filter_afternoon",
+                      title: "Afternoon Slots",
+                      description: `${afternoon} slots available`
+                    });
+                  }
+                  
+                  if (evening > 0) {
+                    timeSlotOptions.push({
+                      id: "filter_evening",
+                      title: "Evening Slots",
+                      description: `${evening} slots available`
+                    });
+                  }
+                } else {
+                  // No slots available at all, suggest changing date
+                  timeSlotOptions.push({
+                    id: "change_date",
+                    title: "Change Date",
+                    description: "No slots available on this date"
+                  });
+                }
               }
-              console.log(`✅ Found ${timeSlots.length} time slots for ${mergedData.time_of_day}`);
+              
+              console.log(`✅ Found ${timeSlots.length} time slots for page ${currentPage+1}`);
             } catch (error) {
               console.error('❌ Error fetching time slots:', error);
+              // Add option to change date on error
+              timeSlotOptions.push({
+                id: "change_date",
+                title: "Change Date",
+                description: "Try a different date"
+              });
             }
+          }
+          
+          // Process time slot selection actions
+          if (mergedData.time_slot && mergedData.time_slot.startsWith('page_')) {
+            // Handle pagination action
+            const pageNumber = parseInt(mergedData.time_slot.split('_')[1], 10);
+            console.log(`🔄 Changing to page ${pageNumber}`);
+            
+            // Update page number and clear time slot selection
+            mergedData.page = pageNumber;
+            mergedData.time_slot = '';
+            
+            // Save the updated state
+            await flowDbUtils.saveFlowState(flow_token, "BOOKING", {
+              ...mergedData,
+              page: pageNumber,
+              time_slot: ''
+            });
+          } else if (mergedData.time_slot && mergedData.time_slot.startsWith('filter_')) {
+            // Handle time of day filter action
+            const filter = mergedData.time_slot.split('_')[1];
+            console.log(`🔄 Applying time filter: ${filter}`);
+            
+            if (filter === 'all') {
+              // Clear time of day filter
+              mergedData.time_of_day = '';
+              mergedData.page = 0; // Reset to first page
+            } else {
+              // Set time of day filter
+              mergedData.time_of_day = filter;
+              mergedData.page = 0; // Reset to first page
+            }
+            
+            // Clear time slot selection
+            mergedData.time_slot = '';
+            
+            // Save the updated state
+            await flowDbUtils.saveFlowState(flow_token, "BOOKING", {
+              ...mergedData,
+              time_of_day: mergedData.time_of_day,
+              page: mergedData.page,
+              time_slot: ''
+            });
+          } else if (mergedData.time_slot && mergedData.time_slot === 'change_date') {
+            // Handle change date action
+            console.log('🔄 User wants to change date');
+            
+            // Clear date selection to allow reselection
+            mergedData.date = '';
+            mergedData.time_slot = '';
+            mergedData.page = 0;
+            mergedData.time_of_day = '';
+            
+            // Update visibility flags
+            visibilityFlags.is_date_enabled = true;
+            visibilityFlags.is_duration_enabled = false;
+            visibilityFlags.is_time_slots_enabled = false;
+            visibilityFlags.is_footer_enabled = false;
+            
+            // Save the updated state
+            await flowDbUtils.saveFlowState(flow_token, "BOOKING", {
+              ...mergedData,
+              date: '',
+              time_slot: '',
+              page: 0,
+              time_of_day: '',
+              ...visibilityFlags
+            });
+          }
+          
+          // Combine regular time slots with navigation options
+          const combinedTimeSlots = [...timeSlots];
+          
+          // Add navigation and filter options if available
+          if (timeSlotOptions.length > 0) {
+            // Only add up to 2 options to stay within WhatsApp limits
+            const limitedOptions = timeSlotOptions.slice(0, 2);
+            combinedTimeSlots.push(...limitedOptions);
           }
           
           return {
@@ -306,11 +499,13 @@ const getNextScreen = async (decryptedBody) => {
               ...SCREEN_RESPONSES.BOOKING.data,
               sports: formattedSports,
               durations: formattedDurations,
-              time_slots: timeSlots, 
+              time_slots: combinedTimeSlots, 
               sport: mergedData.sport || "",
               date: mergedData.date || "",
               duration: mergedData.duration || "",
               time_slot: mergedData.time_slot || "", 
+              page: mergedData.page || 0,
+              time_of_day: mergedData.time_of_day || "",
               ...visibilityFlags
             },
           };
@@ -321,13 +516,19 @@ const getNextScreen = async (decryptedBody) => {
         
       case "SUMMARY":
         try {
+          console.log('💳 Processing SUMMARY screen with payment integration');
           await flowDbUtils.saveFlowState(flow_token, "SUMMARY", data);
-
+          
+          // Get Razorpay service
+          const razorpayService = require('../services/razorpay');
+          const config = require('../config');
+          
+          // Create booking details object
           const bookingDetails = {
             sport: data.sport,
             date: data.date,
             duration: data.duration,
-            time_slot: data.time_slots,
+            time_slot: data.time_slot,
             total_amount: data.total_amount,
             name: data.name,
             phone: data.phone,
@@ -335,31 +536,66 @@ const getNextScreen = async (decryptedBody) => {
             agree_cancellation: data.agree_cancellation,
             agree_terms: data.agree_terms
           };
-
-          const invoiceUrl = `https://example.com/invoice/${flow_token}`;
-
+          
+          console.log('📋 Booking details:', bookingDetails);
+          
+          // Create a Razorpay order
+          const orderData = {
+            amount: parseFloat(data.total_amount),
+            currency: 'INR',
+            receipt: `booking_${flow_token}`,
+            notes: {
+              sport: data.sport,
+              date: data.date,
+              duration: data.duration,
+              time_slot: data.time_slot,
+              flow_token: flow_token
+            }
+          };
+          
+          console.log('🔄 Creating Razorpay order with data:', orderData);
+          
+          // Create the order
+          const order = await razorpayService.createOrder(orderData);
+          console.log('✅ Razorpay order created:', order.id);
+          
+          // Generate payment link
+          const paymentLink = `https://api.razorpay.com/v1/checkout/embedded?key_id=${config.razorpay.keyId}&order_id=${order.id}&name=${encodeURIComponent('PITZONE Sports')}&description=${encodeURIComponent(`Booking for ${data.sport} on ${data.date}`)}&prefill[name]=${encodeURIComponent(data.name || '')}&prefill[contact]=${encodeURIComponent(data.phone || '')}&prefill[email]=${encodeURIComponent(data.email || '')}`;
+          
+          // Save order details to flow state
+          await flowDbUtils.saveFlowState(flow_token, "SUMMARY", {
+            ...data,
+            razorpay_order_id: order.id,
+            payment_link: paymentLink
+          });
+          
           return {
             screen: "SUCCESS",
             data: {
-              invoice_url: invoiceUrl,
+              invoice_url: paymentLink,
               extension_message_response: {
                 params: {
                   flow_token,
-                  booking_details: JSON.stringify(bookingDetails)
+                  booking_details: JSON.stringify(bookingDetails),
+                  razorpay_order_id: order.id
                 },
               },
             },
           };
         } catch (error) {
-          console.error("Error processing SUMMARY screen:", error);
+          console.error("❌ Error processing SUMMARY screen:", error);
+          
+          // Create a fallback payment link
+          const fallbackPaymentLink = `https://pitzone-sports.com/payment-error?flow_token=${flow_token}`;
+          
           return {
             screen: "SUCCESS",
             data: {
-              invoice_url: "https://example.com/invoice/error",
+              invoice_url: fallbackPaymentLink,
               extension_message_response: {
                 params: {
                   flow_token,
-                  error: "Failed to process booking details, but payment was successful."
+                  error: "Failed to process payment. Please try again later."
                 },
               },
             },

@@ -117,9 +117,16 @@ async function getAvailableDates() {
   const dates = [];
   
   for (let i = 0; i < 7; i++) {
+    // Create date at noon to avoid timezone issues
     const date = new Date();
+    date.setHours(12, 0, 0, 0);
     date.setDate(date.getDate() + i);
-    const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    // Format as YYYY-MM-DD ensuring we use local date
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`;
     
     const options = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
     const dateTitle = date.toLocaleDateString('en-US', options);
@@ -138,11 +145,12 @@ async function getAvailableDates() {
  * @param {string} sport - Sport type (badminton, cricket, etc.)
  * @param {string} date - Date in YYYY-MM-DD format
  * @param {number} duration - Duration in hours
- * @param {string} timeOfDay - Optional: "morning" or "evening"
- * @returns {Array} Array of available time slots
+ * @param {string} timeOfDay - Optional: "morning", "afternoon", or "evening"
+ * @param {number} page - Optional: Page number for pagination (0-based)
+ * @returns {Object} Object containing time slots and pagination info
  */
-async function getAvailableTimeSlots(sport, date, duration, timeOfDay) {
-  console.log('🔍 Getting available time slots:', { sport, date, duration, timeOfDay });
+async function getAvailableTimeSlots(sport, date, duration, timeOfDay, page = 0) {
+  console.log('🔍 Getting available time slots:', { sport, date, duration, timeOfDay, page });
   await connectToDatabase();
   
   try {
@@ -152,7 +160,7 @@ async function getAvailableTimeSlots(sport, date, duration, timeOfDay) {
     }
     
     // Convert duration to number if it's a string
-    const durationHours = typeof duration === 'string' ? parseInt(duration, 10) : duration;
+    const durationHours = typeof duration === 'string' ? parseFloat(duration) : duration;
     
     // Get sport configuration for operating hours
     const sportConfig = await getSportConfig(sport);
@@ -216,46 +224,98 @@ async function getAvailableTimeSlots(sport, date, duration, timeOfDay) {
     // Filter slots based on time of day if specified
     let filteredSlots = availableSlots.filter(slot => slot.enabled);
     
+    // Group all available slots by time of day
+    const morningSlots = filteredSlots.filter(slot => {
+      const hour = parseInt(slot.id.split(':')[0], 10);
+      return hour >= 5 && hour < 12;
+    });
+    
+    const afternoonSlots = filteredSlots.filter(slot => {
+      const hour = parseInt(slot.id.split(':')[0], 10);
+      return hour >= 12 && hour < 17;
+    });
+    
+    const eveningSlots = filteredSlots.filter(slot => {
+      const hour = parseInt(slot.id.split(':')[0], 10);
+      return hour >= 17;
+    });
+    
+    // Apply time of day filter if specified
     if (timeOfDay) {
       if (timeOfDay === "morning") {
-        // Morning slots (5:00 AM - 11:59 AM)
-        filteredSlots = filteredSlots.filter(slot => {
-          const hour = parseInt(slot.id.split(':')[0], 10);
-          return hour >= 5 && hour < 12;
-        });
+        filteredSlots = morningSlots;
       } else if (timeOfDay === "afternoon") {
-        // Afternoon slots (12:00 PM - 4:59 PM)
-        filteredSlots = filteredSlots.filter(slot => {
-          const hour = parseInt(slot.id.split(':')[0], 10);
-          return hour >= 12 && hour < 17;
-        });
+        filteredSlots = afternoonSlots;
       } else if (timeOfDay === "evening") {
-        // Evening slots (5:00 PM - 11:59 PM)
-        filteredSlots = filteredSlots.filter(slot => {
-          const hour = parseInt(slot.id.split(':')[0], 10);
-          return hour >= 17;
-        });
+        filteredSlots = eveningSlots;
       }
     }
     
-    // Format slots for display - limit to 10 for WhatsApp
-    const formattedSlots = filteredSlots.slice(0, 10).map(slot => ({
+    // Sort slots by time
+    filteredSlots.sort((a, b) => {
+      const [aHour, aMinute] = a.id.split(':').map(Number);
+      const [bHour, bMinute] = b.id.split(':').map(Number);
+      return (aHour * 60 + aMinute) - (bHour * 60 + bMinute);
+    });
+    
+    // Pagination
+    const SLOTS_PER_PAGE = 8; // Show 8 slots per page to leave room for navigation options
+    const totalSlots = filteredSlots.length;
+    const totalPages = Math.ceil(totalSlots / SLOTS_PER_PAGE);
+    const currentPage = Math.min(page, totalPages - 1);
+    const startIndex = currentPage * SLOTS_PER_PAGE;
+    
+    // Get slots for current page
+    const paginatedSlots = filteredSlots.slice(startIndex, startIndex + SLOTS_PER_PAGE);
+    
+    // Format slots for display
+    const formattedSlots = paginatedSlots.map(slot => ({
       id: slot.id,
-      title: slot.title
+      title: slot.title,
+      enabled: slot.enabled
     }));
     
-    // If no slots available, return empty array
-    if (formattedSlots.length === 0) {
-      console.log('⚠️ No available time slots found');
-      return [];
-    }
+    // Add navigation options if needed
+    const hasMorePages = currentPage < totalPages - 1;
+    const hasPreviousPages = currentPage > 0;
     
-    console.log(`✅ Found ${formattedSlots.length} available time slots`);
-    return formattedSlots;
+    // Create result object with pagination info
+    const result = {
+      slots: formattedSlots,
+      pagination: {
+        currentPage,
+        totalPages,
+        totalSlots,
+        hasMorePages,
+        hasPreviousPages
+      },
+      timeOfDayCounts: {
+        morning: morningSlots.length,
+        afternoon: afternoonSlots.length,
+        evening: eveningSlots.length
+      }
+    };
+    
+    console.log(`✅ Found ${formattedSlots.length} available time slots for page ${currentPage+1}/${totalPages}`);
+    return result;
   } catch (error) {
     console.error('❌ Error getting available time slots:', error);
-    // Don't return fallback data - let the caller handle the empty result
-    return [];
+    // Return empty result with pagination info
+    return {
+      slots: [],
+      pagination: {
+        currentPage: 0,
+        totalPages: 0,
+        totalSlots: 0,
+        hasMorePages: false,
+        hasPreviousPages: false
+      },
+      timeOfDayCounts: {
+        morning: 0,
+        afternoon: 0,
+        evening: 0
+      }
+    };
   }
 }
 

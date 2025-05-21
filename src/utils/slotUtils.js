@@ -39,9 +39,12 @@ async function getAvailableSlots(sport, date, durationHours) {
     const courtIds = courts.map(court => court.courtId);
     
     // Get existing bookings for this date and these courts
+    // Create date at noon to avoid timezone issues
     const bookingDate = new Date(date);
-    const nextDay = new Date(date);
-    nextDay.setDate(nextDay.getDate() + 1);
+    bookingDate.setHours(12, 0, 0, 0);
+    
+    const nextDay = new Date(bookingDate);
+    nextDay.setDate(bookingDate.getDate() + 1);
     
     const existingBookings = await Booking.find({
       courtId: { $in: courtIds },

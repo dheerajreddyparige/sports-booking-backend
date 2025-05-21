@@ -36,6 +36,16 @@ const flowsStateSchema = new mongoose.Schema({
     price: Number
   }],
   
+  // Pagination for time slots
+  currentPage: {
+    type: Number,
+    default: 0
+  },
+  totalPages: {
+    type: Number,
+    default: 1
+  },
+  
   // Selected slot ID
   selectedSlotId: String,
   

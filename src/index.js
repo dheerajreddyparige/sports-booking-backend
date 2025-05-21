@@ -32,11 +32,11 @@ connectToDatabase()
   .catch(err => console.error('MongoDB connection failed:', err));
 
 // Routes
-app.use('/api/health', require('../src/api/health'));
 app.use('/api/available-slots', require('../src/api/available-slots'));
 app.use('/api/bookings', require('../src/api/bookings'));
 app.use('/api/sports', require('../src/api/sports'));
-app.use('/api/webhook', require('../src/api/webhook')); // WhatsApp webhook endpoint
+app.use('/api/webhook', require('../src/api/webhook')); 
+app.use('/api/razorpay-webhook', require('../src/api/razorpayWebhook'));
 
 
 // Start the server

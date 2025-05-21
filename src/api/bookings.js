@@ -17,7 +17,20 @@ router.post("/create", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
-    const bookings = await Booking.find();
+    // Get query parameters for filtering
+    const { phone, status } = req.query;
+    
+    // Build query object
+    const query = {};
+    if (phone) query.customerPhone = phone;
+    if (status) query.status = status;
+    
+    // Only return confirmed or pending bookings by default if no status filter
+    if (!status) {
+      query.status = { $in: ['confirmed', 'pending', 'payment_pending'] };
+    }
+    
+    const bookings = await Booking.find(query);
     res.json(bookings);
   } catch (error) {
     res.status(500).json({ error: error.message });

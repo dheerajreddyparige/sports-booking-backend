@@ -7,7 +7,7 @@ require('dotenv').config();
  */
 class WhatsAppService {
   constructor() {
-    this.baseUrl = 'https://graph.facebook.com/v17.0';
+    this.baseUrl = 'https://graph.facebook.com/v22.0';
     this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
     this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   }
@@ -143,7 +143,7 @@ class WhatsAppService {
         data: messageData
       });
       
-      console.log('✅ Raw message sent successfully:', response.data);
+      console.log('✅ Raw message sent successfully:', messageData);
       return response.data;
     } catch (error) {
       console.error('❌ Error sending raw message:', error.response?.data || error.message);
