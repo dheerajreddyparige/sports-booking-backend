@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const connectToDatabase = require('./utils/connect-to-database');
-const WhatsAppFlowsController = require('./controllers/whatsapp/flows');
+//const WhatsAppFlowsController = require('./controllers/whatsapp/flows');
 const crypto = require('crypto');
 require('dotenv').config();
 
@@ -19,7 +19,7 @@ app.use(
 
 const { APP_SECRET, PRIVATE_KEY, PASSPHRASE = "", PORT = "3000" } = process.env;
 
-app.post("/", WhatsAppFlowsController.handleFlowRequest);
+//app.post("/", WhatsAppFlowsController.handleFlowRequest);
 
 app.get("/", (req, res) => {
   res.send(`<pre>Nothing to see here.

@@ -259,7 +259,7 @@ async function getAvailableTimeSlots(sport, date, duration, timeOfDay, page = 0)
     });
     
     // Pagination
-    const SLOTS_PER_PAGE = 8; // Show 8 slots per page to leave room for navigation options
+    const SLOTS_PER_PAGE = 9; // Show 8 slots per page to leave room for navigation options
     const totalSlots = filteredSlots.length;
     const totalPages = Math.ceil(totalSlots / SLOTS_PER_PAGE);
     const currentPage = Math.min(page, totalPages - 1);

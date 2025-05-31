@@ -217,11 +217,9 @@ async function processIncomingMessage(message) {
         else if (buttonId.startsWith('duration_')) {
           // Extract the duration from the ID
           const duration = parseInt(buttonId.replace('duration_', ''));
-          
           // Get sport and date from flow state
           const sport = flowState.sport;
           const selectedDate = flowState.date;
-          
           if (!sport || !selectedDate) {
             await whatsappService.sendTextMessage(
               from,
@@ -229,14 +227,153 @@ async function processIncomingMessage(message) {
             );
             return;
           }
-          
           // Update flow state
           flowState.duration = duration;
-          flowState.screen = 'time_selection';
+          flowState.screen = 'time_period_selection';
           await flowState.save();
+          // Send morning/afternoon/evening selection buttons
+          const periodButtons = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: from,
+            type: 'interactive',
+            interactive: {
+              type: 'button',
+              body: {
+                text: 'Select a time period:'
+              },
+              action: {
+                buttons: [
+                  {
+                    type: 'reply',
+                    reply: { id: 'period_morning', title: 'Morning' }
+                  },
+                  {
+                    type: 'reply',
+                    reply: { id: 'period_afternoon', title: 'Afternoon' }
+                  },
+                  {
+                    type: 'reply',
+                    reply: { id: 'period_evening', title: 'Evening' }
+                  }
+                ]
+              }
+            }
+          };
+          await whatsappService.sendRawMessage(periodButtons);
+        }
+        // Handle period selection (morning, afternoon, evening)
+        else if (buttonId === 'period_morning' || buttonId === 'period_afternoon' || buttonId === 'period_evening') {
+          // Save selected period in flow state
+          let selectedPeriod = '';
+          if (buttonId === 'period_morning') selectedPeriod = 'morning';
+          if (buttonId === 'period_afternoon') selectedPeriod = 'afternoon';
+          if (buttonId === 'period_evening') selectedPeriod = 'evening';
+          flowState.period = selectedPeriod;
+          flowState.screen = 'slot_selection';
+          await flowState.save();
+
+          // Fetch available slots for the selected sport, date, duration, and period
+          const sport = flowState.sport;
+          const selectedDate = flowState.date;
+          const duration = flowState.duration;
+          if (!sport || !selectedDate || !duration) {
+            await whatsappService.sendTextMessage(
+              from,
+              'Sorry, we couldn\'t find your booking details. Please start over.'
+            );
+            return;
+          }
+          // Get all available slots
+          const { getAvailableSlots } = require('../utils/slotUtils');
+          const allSlots = await getAvailableSlots(sport, selectedDate, duration);
           
-          // Send available time slots
-          await sendAvailableTimeSlots(from, sport, selectedDate, duration);
+          // Filter slots by selected period (morning, afternoon, evening)
+          let filteredSlots = [];
+          if (selectedPeriod === 'morning') {
+            // Morning: 5:00 AM to 11:59 AM
+            filteredSlots = allSlots.filter(slot => {
+              const hour = parseInt(slot.id.split(':')[0]);
+              return hour >= 5 && hour < 12;
+            });
+          } else if (selectedPeriod === 'afternoon') {
+            // Afternoon: 12:00 PM to 4:59 PM
+            filteredSlots = allSlots.filter(slot => {
+              const hour = parseInt(slot.id.split(':')[0]);
+              return hour >= 12 && hour < 17;
+            });
+          } else if (selectedPeriod === 'evening') {
+            // Evening: 5:00 PM to 11:00 PM
+            filteredSlots = allSlots.filter(slot => {
+              const hour = parseInt(slot.id.split(':')[0]);
+              return hour >= 17 && hour < 23;
+            });
+          }
+          
+          // Only keep enabled slots
+          const availableSlots = filteredSlots.filter(slot => slot.enabled);
+          flowState.availableSlots = availableSlots;
+          await flowState.save();
+
+          if (!availableSlots || availableSlots.length === 0) {
+            await whatsappService.sendTextMessage(
+              from,
+              `Sorry, no slots are available for ${selectedPeriod}. Please try another period or date.`
+            );
+            return;
+          }
+
+          // Paginate slots (show up to 9 per page as WhatsApp interactive list)
+          const SLOTS_PER_PAGE = 9;
+          let page = flowState.slotPage || 0;
+          const startIdx = page * SLOTS_PER_PAGE;
+          const endIdx = startIdx + SLOTS_PER_PAGE;
+          const slotsToShow = availableSlots.slice(startIdx, endIdx);
+          const hasMore = availableSlots.length > endIdx;
+
+          // Prepare rows for WhatsApp interactive list
+          let slotRows = slotsToShow.map(slot => ({
+            id: `slot_${slot.id}`,
+            title: slot.label || slot.title || slot.id,
+            description: slot.description || ''
+          }));
+          if (hasMore) {
+            slotRows.push({
+              id: `slots_next_page_${page + 1}`,
+              title: 'Show more',
+              description: 'See more available slots'
+            });
+          }
+
+          const slotSelectionMessage = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: from,
+            type: 'interactive',
+            interactive: {
+              type: 'list',
+              header: {
+                type: 'text',
+                text: `Available slots for ${selectedPeriod}`
+              },
+              body: {
+                text: `Please select a time slot for ${selectedPeriod}:`
+              },
+              footer: {
+                text: `${availableSlots.length} slots available${hasMore ? ' - Use Show more to see next slots' : ''}`
+              },
+              action: {
+                button: 'Select Slot',
+                sections: [
+                  {
+                    title: 'Available Times',
+                    rows: slotRows
+                  }
+                ]
+              }
+            }
+          };
+          await whatsappService.sendRawMessage(slotSelectionMessage);
         }
         // Handle payment confirmation
         else if (buttonId === 'pay_now') {
@@ -571,7 +708,14 @@ async function processIncomingMessage(message) {
       // Handle list replies
       else if (interactive.type === 'list_reply') {
         const listItemId = interactive.list_reply.id;
-        
+        // Handle 'Show more' pagination for time slots
+        if (listItemId.startsWith('show_more_')) {
+          // Extract next page number
+          const nextPage = parseInt(listItemId.replace('show_more_', ''));
+          // Re-send available time slots for the next page
+          await sendAvailableTimeSlots(from, flowState.sport, flowState.date, flowState.duration, nextPage);
+          return;
+        }
         // Check if this is a sport selection
         if (listItemId.startsWith('badminton') || 
             listItemId.startsWith('pickleball') || 
@@ -749,80 +893,68 @@ async function processIncomingMessage(message) {
  * @param {number} duration - Selected duration in hours
  * @returns {Promise<Object>} - API response
  */
-async function sendAvailableTimeSlots(phoneNumber, sportId, selectedDate, duration) {
+async function sendAvailableTimeSlots(phoneNumber, sportId, selectedDate, duration, page = 0) {
   try {
-    console.log('🔄 Sending available time slots...', { phoneNumber, sportId, selectedDate, duration });
-    
-    // Get available time slots from database using flowDbUtils
+    console.log('🔄 Sending available time slots...', { phoneNumber, sportId, selectedDate, duration, page });
     const flowDbUtils = require('../utils/flowDbUtils');
-    console.log('Calling getAvailableTimeSlots with params:', { sportId, selectedDate, duration });
-    const availableSlots = await flowDbUtils.getAvailableTimeSlots(sportId, selectedDate, duration);
+    const SLOTS_PER_PAGE = 9;
+    const availableSlots = await flowDbUtils.getAvailableTimeSlots(sportId, selectedDate, duration, undefined, page);
     console.log('Available slots returned:', availableSlots);
-    
-    if (!availableSlots || availableSlots.length === 0) {
-      // If no slots are available, send a message and return
-      console.log('❌ No available time slots found for the requested parameters');
+    if (!availableSlots || !availableSlots.slots || availableSlots.slots.length === 0) {
       await whatsappService.sendTextMessage(
         phoneNumber,
         `Sorry, there are no ${duration}-hour slots available for ${sportId} on ${selectedDate}. Please try a different date or duration.`
       );
       return { success: false, reason: 'no_slots_available' };
     }
-    
-    // Calculate price for each slot
     const slotsWithPricing = await Promise.all(availableSlots.slots.map(async (slot) => {
       try {
-        // Get price for this slot using flowDbUtils
         const priceDetails = await flowDbUtils.calculatePrice(sportId, duration, selectedDate, slot.id);
         return {
           id: slot.id,
           title: slot.title,
           price: priceDetails.totalAmount,
-          // Extract hour for time grouping
           hour: parseInt(slot.id.split(':')[0])
         };
       } catch (error) {
-        console.error('Error calculating price for slot:', error);
-        // Return slot with default price if calculation fails
         return {
           id: slot.id,
           title: slot.title,
           price: 400 * duration,
-          // Extract hour for time grouping
           hour: parseInt(slot.id.split(':')[0])
         };
       }
     }));
-    
-    // Filter out disabled slots
     const enabledSlots = slotsWithPricing.filter(slot => {
       const originalSlot = availableSlots.slots.find(s => s.id === slot.id);
       return originalSlot && originalSlot.enabled;
     });
-    
-    // Group slots by time of day
-    const morningSlots = enabledSlots.filter(slot => slot.hour >= 6 && slot.hour < 12);
-    const afternoonSlots = enabledSlots.filter(slot => slot.hour >= 12 && slot.hour < 17);
-    const eveningSlots = enabledSlots.filter(slot => slot.hour >= 17 && slot.hour <= 23);
-    
-    console.log('Available slots:', {
-      total: enabledSlots.length,
-      morning: morningSlots.length,
-      afternoon: afternoonSlots.length,
-      evening: eveningSlots.length
-    });
-    
-    // Get or create flow state for this user
+    // Pagination logic
+    const hasMorePages = availableSlots.pagination.hasMorePages;
+    const currentPage = availableSlots.pagination.currentPage;
+    // Prepare slotRows for WhatsApp interactive list
+    let slotRows = enabledSlots.map(slot => ({
+      id: `slot_${slot.id}`,
+      title: `${slot.id} - ${parseInt(slot.id.split(':')[0]) + duration}:${slot.id.split(':')[1]}`,
+      description: `₹${slot.price}`
+    }));
+    // If there are more pages, add a "Show more" option as the last row
+    if (hasMorePages) {
+      slotRows = slotRows.slice(0, SLOTS_PER_PAGE - 1); // 8 slots
+      slotRows.push({
+        id: `show_more_${currentPage + 1}`,
+        title: 'Show more',
+        description: 'See more available slots'
+      });
+    } else {
+      slotRows = slotRows.slice(0, SLOTS_PER_PAGE);
+    }
+    // Save available slots and page info in flow state
     const FlowsState = require('../models/FlowsState');
     const connectToDatabase = require('../utils/connect-to-database');
     await connectToDatabase();
-    
-    // Find existing flow state for this user
     let flowState = await FlowsState.findOne({ phoneNumber }).sort({ updatedAt: -1 });
-    
-    // Update the flow state with all available slots
     if (!flowState) {
-      // Create new flow state if it doesn't exist
       flowState = new FlowsState({
         flowToken: `flow_${phoneNumber}_${Date.now()}`,
         phoneNumber,
@@ -831,92 +963,50 @@ async function sendAvailableTimeSlots(phoneNumber, sportId, selectedDate, durati
         date: selectedDate,
         duration: duration,
         availableSlots: enabledSlots,
+        slotPage: currentPage,
         updatedAt: new Date()
       });
     } else {
-      // Update existing flow state
       flowState.sport = sportId;
       flowState.date = selectedDate;
       flowState.duration = duration;
       flowState.availableSlots = enabledSlots;
+      flowState.slotPage = currentPage;
       flowState.screen = 'time_selection';
       flowState.updatedAt = new Date();
     }
-    
-    // Save the flow state
     await flowState.save();
-    
-    // Send a header message first
-    await whatsappService.sendTextMessage(
-      phoneNumber,
-      `Available ${duration}-hour slots for ${sportId.charAt(0).toUpperCase() + sportId.slice(1)} on ${selectedDate}:\n\nPlease select from the following time slots:`
-    );
-    
-    // Helper function to create and send time slot list
-    async function sendTimeSlotList(slots, timeOfDay) {
-      if (slots.length === 0) return;
-      
-      // Create rows for each available time slot
-      const slotRows = slots.map(slot => ({
-        id: `slot_${slot.id}`,
-        title: `${slot.id} - ${parseInt(slot.id.split(':')[0]) + flowState.duration}:${slot.id.split(':')[1]}`,
-        description: `₹${slot.price}`
-      }));
-      
-      // Create interactive list message for time slot selection
-      const timeSlotMessage = {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: phoneNumber,
-        type: 'interactive',
-        interactive: {
-          type: 'list',
-          header: {
-            type: 'text',
-            text: `${timeOfDay} Slots`
-          },
-          body: {
-            text: `${timeOfDay} slots for ${sportId.charAt(0).toUpperCase() + sportId.slice(1)} (${duration} hour):`
-          },
-          footer: {
-            text: `${slots.length} slots available - Select a time`
-          },
-          action: {
-            button: 'Select Time',
-            sections: [
-              {
-                title: `${timeOfDay} Times`,
-                rows: slotRows
-              }
-            ]
-          }
+    // Send WhatsApp interactive list message
+    const timeSlotMessage = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phoneNumber,
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        header: {
+          type: 'text',
+          text: `Available ${duration}-hour slots for ${sportId.charAt(0).toUpperCase() + sportId.slice(1)} on ${selectedDate}`
+        },
+        body: {
+          text: 'Please select from the following time slots:'
+        },
+        footer: {
+          text: `${enabledSlots.length} slots available${hasMorePages ? ' - Use Show more to see next slots' : ''}`
+        },
+        action: {
+          button: 'Select Time',
+          sections: [
+            {
+              title: 'Available Times',
+              rows: slotRows
+            }
+          ]
         }
-      };
-      
-      // Send interactive message directly using the WhatsApp API
-      return await whatsappService.sendRawMessage(timeSlotMessage);
-    }
-    
-    // Send time slots grouped by time of day
-    const responses = [];
-    
-    if (morningSlots.length > 0) {
-      const morningResponse = await sendTimeSlotList(morningSlots, 'Morning');
-      responses.push(morningResponse);
-    }
-    
-    if (afternoonSlots.length > 0) {
-      const afternoonResponse = await sendTimeSlotList(afternoonSlots, 'Afternoon');
-      responses.push(afternoonResponse);
-    }
-    
-    if (eveningSlots.length > 0) {
-      const eveningResponse = await sendTimeSlotList(eveningSlots, 'Evening');
-      responses.push(eveningResponse);
-    }
-    
-    console.log(`✅ Available time slots sent successfully in ${responses.length} messages`);
-    return { success: true, responses };
+      }
+    };
+    await whatsappService.sendRawMessage(timeSlotMessage);
+    return { success: true };
   } catch (error) {
     console.error('❌ Error sending available time slots:', error);
     throw error;
