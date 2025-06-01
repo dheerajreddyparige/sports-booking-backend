@@ -20,23 +20,8 @@ class WhatsAppFlowsController {
     let decryptedRequest = null;
     try {
       console.log('🔐 Attempting to decrypt request...');
-      // Make sure we have all required properties in the request body
-      if (!req.body.encrypted_aes_key || !req.body.encrypted_flow_data || !req.body.initial_vector) {
-        console.error('❌ Missing required encryption parameters in request body');
-        return res.status(400).json({ error: 'Missing required encryption parameters' });
-      }
       
-      // Get private key and passphrase from environment variables or config
-      const config = require('../../config');
-      const privateKey = process.env.PRIVATE_KEY || config.flow.privateKey;
-      const passphrase = process.env.PASSPHRASE || config.flow.passphrase;
-      
-      if (!privateKey) {
-        console.error('❌ Private key is not configured');
-        return res.status(500).json({ error: 'Server configuration error' });
-      }
-      
-      decryptedRequest = decryptRequest(req.body, privateKey, passphrase);
+      decryptedRequest = decryptRequest(req.body, process.env.PRIVATE_KEY, process.env.PASSPHRASE);
       console.log('✅ Request decrypted successfully');
     } catch (err) {
       console.error('❌ Decryption error:', err);

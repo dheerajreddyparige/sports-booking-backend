@@ -1,5 +1,5 @@
 const express = require("express");
-const Booking = require("../models/Booking.js");
+const Booking = require('../models/mysql/Booking');
 const { getAvailableSlots } = require("../utils/slotUtils.js");
 
 const router = express.Router();

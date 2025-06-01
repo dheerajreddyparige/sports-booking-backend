@@ -1,209 +1,284 @@
+/**
+ * Razorpay Service for MySQL
+ * Handles Razorpay payment operations
+ */
+
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
-const config = require('../config');
+const Payment = require('../models/mysql/PaymentHistory.js');
+const Booking = require('../models/mysql/Booking.js');
+const Customer = require('../models/mysql/Customer.js');
+const FlowsState = require('../models/mysql/FlowsState.js');
 
 // Initialize Razorpay with API keys
 const razorpay = new Razorpay({
-  key_id: config.razorpay.keyId,
-  key_secret: config.razorpay.keySecret
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
-// Payment timeout in milliseconds (5 minutes)
-const PAYMENT_TIMEOUT = 5 * 60 * 1000;
+// Payment timeout in milliseconds (15 minutes)
+const PAYMENT_TIMEOUT = 15 * 60 * 1000;
 
 /**
- * Create a new payment order
- * @param {Object} orderData - Order data including amount, currency, receipt, etc.
- * @returns {Promise<Object>} - Razorpay order object
+ * Create a Razorpay order
+ * @param {Object} orderData - Order data including amount, currency, receipt, notes
+ * @returns {Promise<Object>} - Created order
  */
 async function createOrder(orderData) {
   try {
-    console.log('💳 Creating Razorpay order:', orderData);
-    
-    // Create order with Razorpay
     const order = await razorpay.orders.create({
-      amount: Math.round(orderData.amount * 100), // Amount in paise (multiply by 100)
+      amount: orderData.amount * 100, // Convert to paise
       currency: orderData.currency || 'INR',
       receipt: orderData.receipt,
       notes: orderData.notes || {}
     });
-    
-    console.log('✅ Razorpay order created:', order.id);
+
+    // Store payment record in database
+    await Payment.create({
+      orderId: order.id,
+      bookingId: orderData.bookingId,
+      customerId: orderData.customerId,
+      amount: orderData.amount,
+      currency: orderData.currency || 'INR',
+      paymentMethod: 'razorpay',
+      status: 'created',
+      notes: orderData.notes ? JSON.stringify(orderData.notes) : null
+    });
+
+    // Update booking with order ID
+    if (orderData.bookingId) {
+      await Booking.findOneAndUpdate(
+        { _id: orderData.bookingId },
+        { $set: { 'payment.orderId': order.id } }
+      );
+    }
+
+    // Update flow state if flowToken is provided
+    if (orderData.flowToken) {
+      await FlowsState.findOneAndUpdate(
+        { flowToken: orderData.flowToken },
+        { $set: { 'payment.orderId': order.id } }
+      );
+    }
+
     return order;
   } catch (error) {
-    console.error('❌ Error creating Razorpay order:', error);
+    console.error('Error creating Razorpay order:', error);
     throw error;
   }
 }
 
 /**
- * Verify payment signature
+ * Verify Razorpay payment signature
  * @param {Object} paymentData - Payment data including orderId, paymentId, signature
- * @returns {boolean} - Whether signature is valid
+ * @returns {Boolean} - Whether signature is valid
  */
 function verifyPaymentSignature(paymentData) {
   try {
-    const { orderId, paymentId, signature } = paymentData;
-    
-    // Generate signature
-    const text = `${orderId}|${paymentId}`;
-    const expectedSignature = crypto
-      .createHmac('sha256', config.razorpay.keySecret)
-      .update(text)
+    const generatedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(`${paymentData.orderId}|${paymentData.paymentId}`)
       .digest('hex');
-    
-    // Compare signatures
-    return expectedSignature === signature;
+
+    return generatedSignature === paymentData.signature;
   } catch (error) {
-    console.error('❌ Error verifying payment signature:', error);
+    console.error('Error verifying payment signature:', error);
     return false;
   }
 }
 
 /**
- * Verify webhook signature from Razorpay
- * @param {Object} webhookData - Webhook data including body and signature
- * @returns {boolean} - Whether signature is valid
+ * Process successful payment
+ * @param {Object} paymentData - Payment data from Razorpay
+ * @returns {Promise<Object>} - Updated payment record
  */
-function verifyWebhookSignature(webhookData) {
+async function processSuccessfulPayment(paymentData) {
   try {
-    const { body, signature, secret } = webhookData;
-    
-    // Use provided secret or fall back to key secret
-    const webhookSecret = secret || config.razorpay.keySecret;
-    
-    // Generate signature
-    const expectedSignature = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(body)
-      .digest('hex');
-    
-    // Compare signatures
-    return expectedSignature === signature;
-  } catch (error) {
-    console.error('❌ Error verifying webhook signature:', error);
-    return false;
-  }
-}
+    // Find payment by order ID
+    const payment = await Payment.findOne({ orderId: paymentData.order_id });
+    if (!payment) {
+      throw new Error(`Payment not found for order ID: ${paymentData.order_id}`);
+    }
 
-/**
- * Get payment details
- * @param {string} paymentId - Razorpay payment ID
- * @returns {Promise<Object>} - Payment details
- */
-async function getPaymentDetails(paymentId) {
-  try {
-    const payment = await razorpay.payments.fetch(paymentId);
-    return payment;
-  } catch (error) {
-    console.error('❌ Error fetching payment details:', error);
-    throw error;
-  }
-}
-
-/**
- * Capture an authorized payment
- * @param {string} paymentId - Razorpay payment ID
- * @param {number} amount - Amount to capture (in paise)
- * @returns {Promise<Object>} - Capture response
- */
-async function capturePayment(paymentId, amount) {
-  try {
-    console.log(`💳 Capturing payment ${paymentId} for amount ${amount}`);
-    const payment = await razorpay.payments.capture(paymentId, amount);
-    console.log('✅ Payment captured successfully:', payment.id);
-    return payment;
-  } catch (error) {
-    console.error('❌ Error capturing payment:', error);
-    throw error;
-  }
-}
-
-/**
- * Refund a payment
- * @param {string} paymentId - Razorpay payment ID
- * @param {number} amount - Amount to refund (in paise)
- * @returns {Promise<Object>} - Refund response
- */
-async function refundPayment(paymentId, amount) {
-  try {
-    console.log(`💳 Refunding payment ${paymentId} for amount ${amount}`);
-    const refund = await razorpay.payments.refund(paymentId, {
-      amount: amount
-    });
-    console.log('✅ Payment refunded successfully:', refund.id);
-    return refund;
-  } catch (error) {
-    console.error('❌ Error refunding payment:', error);
-    throw error;
-  }
-}
-
-/**
- * Set a timeout for payment completion
- * @param {string} bookingId - Booking ID
- * @param {string} orderId - Razorpay order ID
- * @returns {Object} - Timeout object that can be cleared
- */
-function setPaymentTimeout(bookingId, orderId) {
-  console.log(`⏱️ Setting ${PAYMENT_TIMEOUT/1000} second timeout for booking ${bookingId}`);
-  
-  const timeoutId = setTimeout(async () => {
-    try {
-      // Import models here to avoid circular dependencies
-      const Booking = require('../models/Booking');
-      const FlowsState = require('../models/FlowsState');
-      
-      // Check if booking exists and payment is still pending
-      const booking = await Booking.findById(bookingId);
-      
-      if (booking && booking.paymentStatus === 'pending') {
-        console.log(`⏱️ Payment timeout for booking ${bookingId}. Cancelling booking.`);
-        
-        // Update booking status
-        booking.status = 'cancelled';
-        booking.notes = booking.notes ? `${booking.notes}\nCancelled due to payment timeout.` : 'Cancelled due to payment timeout.';
-        await booking.save();
-        
-        // Get user's flow state
-        const flowState = await FlowsState.findOne({ bookingId: bookingId });
-        
-        if (flowState) {
-          // Send timeout message via WhatsApp
-          const whatsappService = require('./whatsapp');
-          await whatsappService.sendTextMessage(
-            flowState.phoneNumber,
-            'Your booking has been cancelled because the payment was not completed within 5 minutes. Please start a new booking if you still want to book a slot.'
-          );
+    // Update payment record
+    const updatedPayment = await Payment.findOneAndUpdate(
+      { orderId: paymentData.order_id },
+      {
+        $set: {
+          transactionId: paymentData.payment_id,
+          status: 'completed',
+          paymentDetails: paymentData
         }
       }
-    } catch (error) {
-      console.error('❌ Error handling payment timeout:', error);
+    );
+
+    // Update booking status if associated with this payment
+    if (updatedPayment.bookingId) {
+      await Booking.findOneAndUpdate(
+        { _id: updatedPayment.bookingId },
+        {
+          $set: {
+            'payment.status': 'completed',
+            'payment.transactionId': paymentData.payment_id,
+            status: 'confirmed'
+          }
+        }
+      );
     }
-  }, PAYMENT_TIMEOUT);
-  
-  return { timeoutId };
+
+    // Update customer payment history
+    if (updatedPayment.customerId) {
+      await Customer.findOneAndUpdate(
+        { customerId: updatedPayment.customerId },
+        {
+          $push: {
+            paymentHistory: {
+              amount: updatedPayment.amount,
+              currency: updatedPayment.currency,
+              paymentMethod: updatedPayment.paymentMethod,
+              transactionId: updatedPayment.transactionId,
+              status: 'completed',
+              paymentDate: new Date()
+            }
+          }
+        }
+      );
+    }
+
+    // Update flow state if needed
+    const booking = await Booking.findOne({ _id: updatedPayment.bookingId });
+    if (booking && booking.flowToken) {
+      await FlowsState.findOneAndUpdate(
+        { flowToken: booking.flowToken },
+        {
+          $set: {
+            'payment.status': 'completed',
+            'payment.transactionId': paymentData.payment_id
+          }
+        }
+      );
+    }
+
+    return updatedPayment;
+  } catch (error) {
+    console.error('Error processing successful payment:', error);
+    throw error;
+  }
 }
 
 /**
- * Clear payment timeout
- * @param {Object} timeout - Timeout object returned by setPaymentTimeout
+ * Process failed payment
+ * @param {Object} paymentData - Payment data from Razorpay
+ * @returns {Promise<Object>} - Updated payment record
  */
-function clearPaymentTimeout(timeout) {
-  if (timeout && timeout.timeoutId) {
-    clearTimeout(timeout.timeoutId);
-    console.log('⏱️ Payment timeout cleared');
+async function processFailedPayment(paymentData) {
+  try {
+    // Find payment by order ID
+    const payment = await Payment.findOne({ orderId: paymentData.order_id });
+    if (!payment) {
+      throw new Error(`Payment not found for order ID: ${paymentData.order_id}`);
+    }
+
+    // Update payment record
+    const updatedPayment = await Payment.findOneAndUpdate(
+      { orderId: paymentData.order_id },
+      {
+        $set: {
+          transactionId: paymentData.payment_id,
+          status: 'failed',
+          paymentDetails: paymentData
+        }
+      }
+    );
+
+    // Update booking status if associated with this payment
+    if (updatedPayment.bookingId) {
+      await Booking.findOneAndUpdate(
+        { _id: updatedPayment.bookingId },
+        {
+          $set: {
+            'payment.status': 'failed',
+            'payment.transactionId': paymentData.payment_id,
+            status: 'payment_failed'
+          }
+        }
+      );
+    }
+
+    // Update flow state if needed
+    const booking = await Booking.findOne({ _id: updatedPayment.bookingId });
+    if (booking && booking.flowToken) {
+      await FlowsState.findOneAndUpdate(
+        { flowToken: booking.flowToken },
+        {
+          $set: {
+            'payment.status': 'failed',
+            'payment.transactionId': paymentData.payment_id
+          }
+        }
+      );
+    }
+
+    return updatedPayment;
+  } catch (error) {
+    console.error('Error processing failed payment:', error);
+    throw error;
+  }
+}
+
+/**
+ * Generate payment link for WhatsApp
+ * @param {Object} paymentData - Payment data including orderId, amount, currency, description
+ * @returns {Promise<String>} - Payment link URL
+ */
+async function generatePaymentLink(paymentData) {
+  try {
+    // Find payment by order ID
+    const payment = await Payment.findOne({ orderId: paymentData.orderId });
+    if (!payment) {
+      throw new Error(`Payment not found for order ID: ${paymentData.orderId}`);
+    }
+
+    // Create payment link
+    const paymentLink = await razorpay.paymentLink.create({
+      amount: paymentData.amount * 100, // Convert to paise
+      currency: paymentData.currency || 'INR',
+      description: paymentData.description || 'Sports Booking Payment',
+      reference_id: paymentData.orderId,
+      customer: {
+        name: paymentData.customerName,
+        email: paymentData.customerEmail,
+        contact: paymentData.customerPhone
+      },
+      notify: {
+        sms: true,
+        email: true,
+        whatsapp: true
+      },
+      reminder_enable: true,
+      notes: paymentData.notes || {},
+      callback_url: paymentData.callbackUrl,
+      callback_method: 'get'
+    });
+
+    // Update payment record with link ID
+    await Payment.findOneAndUpdate(
+      { orderId: paymentData.orderId },
+      { $set: { 'paymentDetails.linkId': paymentLink.id } }
+    );
+
+    return paymentLink.short_url;
+  } catch (error) {
+    console.error('Error generating payment link:', error);
+    throw error;
   }
 }
 
 module.exports = {
   createOrder,
   verifyPaymentSignature,
-  verifyWebhookSignature,
-  getPaymentDetails,
-  capturePayment,
-  refundPayment,
-  setPaymentTimeout,
-  clearPaymentTimeout,
+  processSuccessfulPayment,
+  processFailedPayment,
+  generatePaymentLink,
   PAYMENT_TIMEOUT
 };

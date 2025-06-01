@@ -12,11 +12,17 @@
  * Run this script using command below:
  *
  *             node src/keyGenerator.js {passphrase}
+ *  
  *
  */
 
 import crypto from "crypto";
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const passphrase = process.argv[2];
 if (!passphrase) {
   throw new Error(

@@ -1,67 +1,81 @@
+/**
+ * Main application entry point
+ * MySQL version
+ */
+
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const connectToDatabase = require('./utils/connect-to-database');
-//const WhatsAppFlowsController = require('./controllers/whatsapp/flows');
-const crypto = require('crypto');
-require('dotenv').config();
+const bodyParser = require('body-parser');
+const connectToDatabase = require('./utils/mysql-connection');
+const WhatsAppFlowsController = require('./controllers/whatsapp/flows');
+// Import routes
+const availableSlotsRoutes = require('./api/available-slots.js');
+const bookingRoutes = require('./api/bookings.js');
+const sportsRoutes = require('./api/sports.js');
+const webhookRoutes = require('./api/webhook.js');
+const razorpayWebhookRoutes = require('./api/razorpayWebhook.js');
 
+// Create Express app
 const app = express();
+
+// Middleware
 app.use(cors());
 
-// Apply express.json middleware with rawBody storage for signature validation
-app.use(
-  express.json({
-    verify: (req, res, buf, encoding) => {
-      req.rawBody = buf?.toString(encoding || "utf8");
-    },
-  }),
-);
+// Parse JSON bodies
+app.use(bodyParser.json({
+  verify: (req, res, buf) => {
+    // Save raw body for signature verification
+    if (req.url.includes('/api/razorpay-webhook')) {
+      req.rawBody = buf.toString();
+    }
+  }
+}));
 
-const { APP_SECRET, PRIVATE_KEY, PASSPHRASE = "", PORT = "3000" } = process.env;
+// Parse URL-encoded bodies
+app.use(bodyParser.urlencoded({ extended: true }));
 
-//app.post("/", WhatsAppFlowsController.handleFlowRequest);
-
-app.get("/", (req, res) => {
-  res.send(`<pre>Nothing to see here.
-Checkout README.md to start.</pre>`);
+// Basic route
+app.get('/', (req, res) => {
+  res.send('Sports Booking API - MySQL Version');
 });
 
-// Initialize MongoDB connection
-connectToDatabase()
-  .then(() => console.log('MongoDB connection ready'))
-  .catch(err => console.error('MongoDB connection failed:', err));
-
-// Routes
-app.use('/api/available-slots', require('../src/api/available-slots'));
-app.use('/api/bookings', require('../src/api/bookings'));
-app.use('/api/sports', require('../src/api/sports'));
-app.use('/api/webhook', require('../src/api/webhook')); 
-app.use('/api/razorpay-webhook', require('../src/api/razorpayWebhook'));
+// API routes
+app.use('/api/available-slots', require('./api/available-slots.js'));
+app.use('/api/bookings', require('./api/bookings.js'));
+app.use('/api/sports', require('./api/sports.js'));
+app.use('/api/webhook', require('./api/webhook.js'));
+app.use('/api/razorpay-webhook', require('./api/razorpayWebhook.js'));
 
 
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server is running on port: ${PORT}`);
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Something went wrong!' });
 });
+app.post("/", WhatsAppFlowsController.handleFlowRequest);
+// Start server
+const PORT = process.env.PORT || 3000;
 
-function isRequestSignatureValid(req) {
-  if (!APP_SECRET) {
-    console.warn("App Secret is not set up. Please Add your app secret in /.env file to check for request validation");
-    return true; // Assuming no signature validation in absence of secret
+async function startServer() {
+  try {
+    // Initialize database connection
+    const pool = await connectToDatabase();
+    console.log('Connected to MySQL database');
+    
+    // Test the connection
+    const [rows] = await pool.query('SELECT 1 as test');
+    console.log('Database connection test:', rows[0].test === 1 ? 'Successful' : 'Failed');
+    
+    // Start the server
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to connect to the database:', error);
+    process.exit(1);
   }
-
-  const signatureHeader = req.get("x-hub-signature-256");
-  const signatureBuffer = Buffer.from(signatureHeader.replace("sha256=", ""), "utf-8");
-
-  const hmac = crypto.createHmac("sha256", APP_SECRET);
-  const digestString = hmac.update(req.rawBody).digest('hex');
-  const digestBuffer = Buffer.from(digestString, "utf-8");
-
-  if (!crypto.timingSafeEqual(digestBuffer, signatureBuffer)) {
-    console.error("Error: Request Signature did not match");
-    return false;
-  }
-  return true;
 }
 
-module.exports = app;
+// Start the server
+startServer();

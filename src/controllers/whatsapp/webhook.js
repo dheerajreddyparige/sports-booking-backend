@@ -1,8 +1,8 @@
 const crypto = require('crypto');
 const { FlowEndpointException } = require('../../utils/encryption');
-const FlowsState = require('../../models/FlowsState');
+const FlowsState = require('../../models/mysql/FlowsState.js');
 const whatsappMessaging = require('../../services/whatsappMessaging');
-const connectToDatabase = require('../../utils/connect-to-database');
+const connectToDatabase = require('../../utils/mysql-connection');
 
 /**
  * WhatsApp Webhook Controller

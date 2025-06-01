@@ -7,8 +7,15 @@ const WHATSAPP_FLOW ={
   "version": "7.0",
   "data_api_version": "3.0",
   "routing_model": {
-    "BOOKING": ["SUMMARY"],
-    "SUMMARY": ["SUCCESS"],
+    "BOOKING": [
+      "DETAILS"
+    ],
+    "DETAILS": [
+      "SUMMARY"
+    ],
+    "SUMMARY": [
+      "SUCCESS"
+    ],
     "SUCCESS": []
   },
   "screens": [
@@ -21,30 +28,59 @@ const WHATSAPP_FLOW ={
           "items": {
             "type": "object",
             "properties": {
-              "id": {"type": "string"},
-              "title": {"type": "string"},
-              "image": {"type": "string"},
-              "description": {"type": "string"},
-              "metadata": {"type": "string"}
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "image": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "string"
+              }
             }
           },
           "__example__": [
-            {"id": "badminton", "title": "Badminton", "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "description": "Badminton court", "metadata": "Annual Fee: $50"}
-           ]
+            {
+              "id": "badminton",
+              "title": "Badminton",
+              "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+              "description": "Badminton court",
+              "metadata": "Annual Fee: $50"
+            }
+          ]
         },
         "durations": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "id": {"type": "string"},
-              "title": {"type": "string"},
-              "description": {"type": "string"},
-              "metadata": {"type": "string"}
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "string"
+              }
             }
           },
           "__example__": [
-            {"id": "1", "title": "1 Hour", "description":"","metadata": "" }
+            {
+              "id": "1",
+              "title": "1 Hour",
+              "description": "",
+              "metadata": ""
+            }
           ]
         },
         "time_slots": {
@@ -52,12 +88,20 @@ const WHATSAPP_FLOW ={
           "items": {
             "type": "object",
             "properties": {
-              "id": {"type": "string"},
-              "title": {"type": "string"}
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
             }
           },
           "__example__": [
-            {"id": "09:00-10:00", "title": "9:00 AM - 10:00 AM","enabled": false}
+            {
+              "id": "09:00-10:00",
+              "title": "9:00 AM - 10:00 AM",
+              "enabled": false
+            }
           ]
         },
         "sport": {
@@ -72,7 +116,7 @@ const WHATSAPP_FLOW ={
           "type": "string",
           "__example__": ""
         },
-         "time_slot": {
+        "time_slot": {
           "type": "string",
           "__example__": ""
         },
@@ -96,22 +140,19 @@ const WHATSAPP_FLOW ={
       "layout": {
         "type": "SingleColumnLayout",
         "children": [
-          
-           {
-             "type": "Dropdown",
-             "name": "sport",
-             "required": true,
-             "data-source": "${data.sports}",
-             "label": "Select Sports",
-             "on-select-action": {
-                "name":"data_exchange",
-                "payload": {
+          {
+            "type": "Dropdown",
+            "name": "sport",
+            "required": true,
+            "data-source": "${data.sports}",
+            "label": "Select Sports",
+            "on-select-action": {
+              "name": "data_exchange",
+              "payload": {
                 "sport": "${form.sport}"
-               }
-             }
-           },
-          
-        
+              }
+            }
+          },
           {
             "type": "DatePicker",
             "name": "date",
@@ -146,7 +187,7 @@ const WHATSAPP_FLOW ={
               }
             }
           },
-           {
+          {
             "type": "Dropdown",
             "name": "time_slot",
             "label": "Select Time",
@@ -179,14 +220,141 @@ const WHATSAPP_FLOW ={
             "type": "Footer",
             "label": "Continue",
             "on-click-action": {
-             "name": "data_exchange",
+              "name": "data_exchange",
               "payload": {
                 "sport": "${data.sport}",
                 "date": "${data.date}",
                 "duration": "${data.duration}",
-                "time_slot": "${data.time_slot}"
+                "time_slot": "${data.time_slot}",
+                "is_footer_enabled": true
               }
-             
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "DETAILS",
+      "title": "👤 Customer Details",
+      "data": {
+        "sport": {
+          "type": "string",
+          "__example__": ""
+        },
+        "date": {
+          "type": "string",
+          "__example__": ""
+        },
+        "duration": {
+          "type": "string",
+          "__example__": ""
+        },
+        "time_slot": {
+          "type": "string",
+          "__example__": ""
+        },
+        "total_amount": {
+          "type": "string",
+          "__example__": ""
+        },
+        "discount_info": {
+          "type": "string",
+          "__example__": ""
+        },
+        "name": {
+          "type": "string",
+          "__example__": ""
+        },
+        "phone": {
+          "type": "string",
+          "__example__": ""
+        },
+        "email": {
+          "type": "string",
+          "__example__": ""
+        },
+        "is_existing_customer": {
+          "type": "boolean",
+          "__example__": false
+        },
+        "is_name_enabled": {
+          "type": "boolean",
+          "__example__": true
+        },
+        "is_phone_enabled": {
+          "type": "boolean",
+          "__example__": true
+        },
+        "is_email_enabled": {
+          "type": "boolean",
+          "__example__": true
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "Booking Details"
+          },
+          {
+            "type": "TextBody",
+            "text": "Sport: ${data.sport}\nDate: ${data.date}\nDuration: ${data.duration}\nTime Slot: ${data.time_slot}\nTotal Amount: ₹${data.total_amount}\n${data.discount_info}"
+          },
+          {
+            "type": "TextHeading",
+            "text": "Customer Information"
+          },
+          {
+            "type": "TextBody",
+            "text": "Please provide your contact details to complete the booking.",
+            "visible": "${data.is_name_enabled}"
+          },
+          {
+            "type": "TextBody",
+            "text": "Welcome back! Your details are pre-filled.",
+            "visible": "${!data.is_name_enabled}"
+          },
+          {
+            "type": "TextInput",
+            "name": "name",
+            "label": "Full Name *",
+            "required": true,
+            "enabled": "${data.is_name_enabled}",
+            "value": "${data.name}"
+          },
+          {
+            "type": "TextInput",
+            "name": "phone",
+            "label": "Phone Number *",
+            "required": true,
+            "input-type": "phone",
+            "enabled": "${data.is_phone_enabled}",
+            "value": "${data.phone}"
+          },
+          {
+            "type": "TextInput",
+            "name": "email",
+            "label": "Email Address",
+            "required": false,
+            "input-type": "email",
+            "enabled": "${data.is_email_enabled}",
+            "value": "${data.email}"
+          },
+          {
+            "type": "TextBody",
+            "text": "⏰ Booking will be held for 5 minutes once you click 'Continue'. Please complete payment within this time or the booking will be released."
+          },
+          {
+            "type": "Footer",
+            "label": "Continue",
+            "on-click-action": {
+              "name": "data_exchange",
+              "payload": {
+                "name": "${form.name}",
+                "phone": "${form.phone}",
+                "email": "${form.email}"
+              }
             }
           }
         ]
@@ -196,41 +364,29 @@ const WHATSAPP_FLOW ={
       "id": "SUMMARY",
       "title": "✅ Booking Summary",
       "data": {
-         "sport": {
+        "sport": {
           "type": "string",
-          "__example__": "123"
+          "__example__": ""
         },
-            "date": {
+        "date": {
           "type": "string",
-          "__example__": "123"
+          "__example__": ""
         },
-            "duration": {
+        "duration": {
           "type": "string",
-          "__example__": "123"
+          "__example__": ""
         },
-            "time_slot": {
+        "time_slot": {
           "type": "string",
-          "__example__": "123"
+          "__example__": ""
         },
         "total_amount": {
-          "type": "number",
-          "__example__": 855
+          "type": "string",
+          "__example__": ""
         },
         "discount_info": {
           "type": "string",
-          "__example__": "5% off for 2-hour booking"
-        },
-        "rate_info": {
-          "type": "string",
-          "__example__": "Weekend evening rate applied"
-        },
-        "rates": {
-          "type": "string",
-          "__example__": "Badminton: Weekday Morning ₹300/hr, Evening ₹350/hr; Weekend Morning ₹400/hr, Evening ₹450/hr\nCricket: Weekday Morning ₹1500/hr, Evening ₹1800/hr; Weekend Morning ₹2000/hr, Evening ₹2200/hr\nPickleball: Weekday Morning ₹200/hr, Evening ₹250/hr; Weekend Morning ₹300/hr, Evening ₹350/hr"
-        },
-        "cancellation_policy": {
-          "type": "string",
-          "__example__": "100% refund: Cancel >2 hours before booking.\n75% refund: Cancel 1-2 hours before.\nNo refund: Cancel <1 hour before."
+          "__example__": ""
         },
         "terms": {
           "type": "string",
@@ -242,11 +398,11 @@ const WHATSAPP_FLOW ={
         "children": [
           {
             "type": "TextHeading",
-            "text": "${data.sport}"
+            "text": "Appoitment Details"
           },
           {
             "type": "TextBody",
-            "text": "Sport: ${data.sport}\nDate: ${data.date}\nDuration: ${data.duration} Hour(s)\nTime Slot: ${data.time_slot}\n${data.rate_info}\nTotal Amount: ₹${data.total_amount}\n${data.discount_info}"
+            "text": "Sport: ${data.sport}\nDate: ${data.date}\nDuration: ${data.duration}\nTime Slot: ${data.time_slot}\nTotal Amount: ₹${data.total_amount}\n${data.discount_info}"
           },
           {
             "type": "TextInput",
@@ -264,7 +420,8 @@ const WHATSAPP_FLOW ={
           {
             "type": "TextInput",
             "name": "email",
-            "label": "Email (Optional)",
+            "label": "Email",
+            "required": true,
             "input-type": "email"
           },
           {
@@ -272,7 +429,10 @@ const WHATSAPP_FLOW ={
             "name": "agree_cancellation",
             "label": "Cancellation Policy Agreement",
             "data-source": [
-              {"id": "cancellation", "title": "I agree to the Cancellation Policy"}
+              {
+                "id": "cancellation",
+                "title": "I agree to the Cancellation Policy"
+              }
             ],
             "required": true
           },
@@ -285,7 +445,10 @@ const WHATSAPP_FLOW ={
             "name": "agree_terms",
             "label": "Terms & Conditions Agreement",
             "data-source": [
-              {"id": "terms", "title": "I agree to the Terms & Conditions"}
+              {
+                "id": "terms",
+                "title": "I agree to the Terms & Conditions"
+              }
             ],
             "required": true
           },
@@ -302,10 +465,10 @@ const WHATSAPP_FLOW ={
                 "sport": "${screen.data.sport}",
                 "date": "${screen.data.date}",
                 "duration": "${screen.data.duration}",
-                "time_slot": "${data.time_slot}",
+                "time_of_day": "${screen.data.time_of_day}",
+                "time_slots": "${screen.data.time_slots}",
                 "total_amount": "${data.total_amount}",
                 "discount_info": "${data.discount_info}",
-                "rate_info": "${data.rate_info}",
                 "name": "${screen.data.name}",
                 "phone": "${screen.data.phone}",
                 "email": "${screen.data.email}",
@@ -325,6 +488,10 @@ const WHATSAPP_FLOW ={
         "invoice_url": {
           "type": "string",
           "__example__": "[invalid url, do not cite]"
+        },
+            "cancellation_policy": {
+          "type": "string",
+          "__example__": "100% refund: Cancel >2 hours before booking.\n75% refund: Cancel 1-2 hours before.\nNo refund: Cancel <1 hour before."
         }
       },
       "layout": {

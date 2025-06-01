@@ -1,227 +1,339 @@
-const axios = require('axios');
-require('dotenv').config();
-
 /**
- * WhatsApp Messaging Service
- * Handles sending messages and templates to WhatsApp
+ * WhatsApp Service for MySQL
+ * Handles WhatsApp messaging operations
  */
+
+const axios = require('axios');
+const Customer = require('../models/mysql/Customer.js');
+const FlowsState = require('../models/mysql/FlowsState.js');
+
 class WhatsAppService {
   constructor() {
-    this.baseUrl = 'https://graph.facebook.com/v22.0';
+    this.apiVersion = process.env.WHATSAPP_API_VERSION || 'v23.0';
     this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
     this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+    this.baseUrl = `https://graph.facebook.com/${this.apiVersion}/${this.phoneNumberId}`;
   }
 
   /**
-   * Sends a template message to a WhatsApp user
-   * @param {string} to - Recipient's phone number
-   * @param {string} templateName - Name of the template
-   * @param {string} language - Language code (default: 'en_US')
+   * Send a WhatsApp message
+   * @param {String} to - Recipient phone number with country code
+   * @param {Object} message - Message object
+   * @returns {Promise<Object>} - API response
+   */
+  async sendMessage(to, message) {
+    try {
+      const formattedTo = this.formatPhoneNumber(to);
+      
+      const response = await axios.post(
+        `${this.baseUrl}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: formattedTo,
+          type: message.type,
+          [message.type]: message.content
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      // Update customer's last active timestamp
+      await this.updateCustomerActivity(formattedTo);
+
+      return response.data;
+    } catch (error) {
+      console.error('Error sending WhatsApp message:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Send a template message
+   * @param {String} to - Recipient phone number with country code
+   * @param {String} templateName - Name of the template
    * @param {Array} components - Template components
    * @returns {Promise<Object>} - API response
    */
-  async sendTemplate(to, templateName, language = 'en_US', components = []) {
-    console.log(`🔄 Sending template '${templateName}' to ${to}`);
-    
+  async sendTemplate(to, templateName, components = []) {
     try {
-      const response = await axios({
-        method: 'POST',
-        url: `${this.baseUrl}/${this.phoneNumberId}/messages`,
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        data: {
+      const formattedTo = this.formatPhoneNumber(to);
+      
+      // Construct template components
+      const templateComponents = [];
+      
+      if (components.length > 0) {
+        templateComponents.push({
+          type: 'body',
+          parameters: components
+        });
+      }
+
+      const response = await axios.post(
+        `${this.baseUrl}/messages`,
+        {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          to: formattedTo,
           type: 'template',
           template: {
             name: templateName,
             language: {
-              code: language
+              code: 'en_US'
             },
-            components
+            components: templateComponents
+          }
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
           }
         }
-      });
-      
-      console.log('✅ Template sent successfully:', response.data);
+      );
+
+      // Update customer's last active timestamp
+      await this.updateCustomerActivity(formattedTo);
+
       return response.data;
     } catch (error) {
-      console.error('❌ Error sending template:', error.response?.data || error.message);
+      console.error('Error sending WhatsApp template:', error.response?.data || error.message);
       throw error;
     }
   }
 
   /**
-   * Sends a text message to a WhatsApp user
-   * @param {string} to - Recipient's phone number
-   * @param {string} text - Message text
+   * Send an interactive list message
+   * @param {String} to - Recipient phone number with country code
+   * @param {String} headerText - Header text
+   * @param {String} bodyText - Body text
+   * @param {String} footerText - Footer text
+   * @param {String} buttonText - Button text
+   * @param {Array} sections - List sections
    * @returns {Promise<Object>} - API response
    */
-  async sendTextMessage(to, text) {
-    console.log(`🔄 Sending text message to ${to}`);
-    
+  async sendListMessage(to, headerText, bodyText, footerText, buttonText, sections) {
     try {
-      const response = await axios({
-        method: 'POST',
-        url: `${this.baseUrl}/${this.phoneNumberId}/messages`,
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        data: {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to,
-          type: 'text',
-          text: {
-            body: text
-          }
-        }
-      });
+      const formattedTo = this.formatPhoneNumber(to);
       
-      console.log('✅ Text message sent successfully:', response.data);
-      return response.data;
-    } catch (error) {
-      console.error('❌ Error sending text message:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Sends an interactive message to a WhatsApp user
-   * @param {string} to - Recipient's phone number
-   * @param {Object} interactive - Interactive message object
-   * @returns {Promise<Object>} - API response
-   */
-  async sendInteractiveMessage(to, interactive) {
-    console.log(`🔄 Sending interactive message to ${to}`);
-    
-    try {
-      const response = await axios({
-        method: 'POST',
-        url: `${this.baseUrl}/${this.phoneNumberId}/messages`,
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        data: {
+      const response = await axios.post(
+        `${this.baseUrl}/messages`,
+        {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          to: formattedTo,
           type: 'interactive',
-          interactive
+          interactive: {
+            type: 'list',
+            header: {
+              type: 'text',
+              text: headerText
+            },
+            body: {
+              text: bodyText
+            },
+            footer: {
+              text: footerText
+            },
+            action: {
+              button: buttonText,
+              sections: sections
+            }
+          }
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          }
         }
-      });
-      
-      console.log('✅ Interactive message sent successfully:', response.data);
+      );
+
+      // Update customer's last active timestamp
+      await this.updateCustomerActivity(formattedTo);
+
       return response.data;
     } catch (error) {
-      console.error('❌ Error sending interactive message:', error.response?.data || error.message);
+      console.error('Error sending WhatsApp list message:', error.response?.data || error.message);
       throw error;
     }
   }
 
   /**
-   * Sends a raw message object directly to WhatsApp API
-   * @param {Object} messageData - Complete message data object
+   * Send a button message
+   * @param {String} to - Recipient phone number with country code
+   * @param {String} headerText - Header text
+   * @param {String} bodyText - Body text
+   * @param {String} footerText - Footer text
+   * @param {Array} buttons - Buttons
    * @returns {Promise<Object>} - API response
    */
-  async sendRawMessage(messageData) {
-    console.log('🔄 Sending raw message');
-    
+  async sendButtonMessage(to, headerText, bodyText, footerText, buttons) {
     try {
-      const response = await axios({
-        method: 'POST',
-        url: `${this.baseUrl}/${this.phoneNumberId}/messages`,
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        data: messageData
-      });
+      const formattedTo = this.formatPhoneNumber(to);
       
-      console.log('✅ Raw message sent successfully:', messageData);
-      return response.data;
-    } catch (error) {
-      console.error('❌ Error sending raw message:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Marks a message as read
-   * @param {string} messageId - ID of the message to mark as read
-   * @returns {Promise<Object>} - API response
-   */
-  async markMessageAsRead(messageId) {
-    console.log(`🔄 Marking message ${messageId} as read`);
-    
-    try {
-      const response = await axios({
-        method: 'POST',
-        url: `${this.baseUrl}/${this.phoneNumberId}/messages`,
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        data: {
+      const response = await axios.post(
+        `${this.baseUrl}/messages`,
+        {
           messaging_product: 'whatsapp',
-          status: 'read',
-          message_id: messageId
+          recipient_type: 'individual',
+          to: formattedTo,
+          type: 'interactive',
+          interactive: {
+            type: 'button',
+            header: headerText ? {
+              type: 'text',
+              text: headerText
+            } : undefined,
+            body: {
+              text: bodyText
+            },
+            footer: footerText ? {
+              text: footerText
+            } : undefined,
+            action: {
+              buttons: buttons
+            }
+          }
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          }
         }
-      });
-      
-      console.log('✅ Message marked as read:', response.data);
+      );
+
+      // Update customer's last active timestamp
+      await this.updateCustomerActivity(formattedTo);
+
       return response.data;
     } catch (error) {
-      console.error('❌ Error marking message as read:', error.response?.data || error.message);
+      console.error('Error sending WhatsApp button message:', error.response?.data || error.message);
       throw error;
     }
   }
 
   /**
-   * Sends a flow message to a WhatsApp user
-   * @param {string} to - Recipient's phone number
-   * @param {string} flowToken - Flow token
-   * @param {string} flowId - Flow ID
+   * Start a WhatsApp Flow
+   * @param {String} to - Recipient phone number with country code
+   * @param {String} flowToken - Flow token
+   * @param {String} flowId - Flow ID
    * @param {Object} flowData - Flow data
    * @returns {Promise<Object>} - API response
    */
-  async sendFlowMessage(to, flowToken, flowId, flowData = {}) {
-    console.log(`🔄 Sending flow message to ${to}`);
-    
+  async startFlow(to, flowToken, flowId, flowData = {}) {
     try {
-      const response = await axios({
-        method: 'POST',
-        url: `${this.baseUrl}/${this.phoneNumberId}/messages`,
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        data: {
+      const formattedTo = this.formatPhoneNumber(to);
+      
+      const response = await axios.post(
+        `${this.baseUrl}/messages`,
+        {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
-          type: 'interactive',
-          interactive: {
-            type: 'flow',
-            flow: {
-              id: flowId,
-              flow_token: flowToken,
-              ...flowData
-            }
+          to: formattedTo,
+          type: 'flows',
+          flows: {
+            flow_token: flowToken,
+            flow_id: flowId,
+            flow_cta: 'Book Now',
+            flow_action: 'navigate',
+            flow_data: flowData
+          }
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
           }
         }
-      });
-      
-      console.log('✅ Flow message sent successfully:', response.data);
+      );
+
+      // Create or update flow state
+      await FlowsState.findOneAndUpdate(
+        { flowToken },
+        {
+          $set: {
+            flowToken,
+            phoneNumber: formattedTo,
+            screen: 'initial',
+            processedMessages: []
+          }
+        },
+        { upsert: true }
+      );
+
+      // Update customer's last active timestamp
+      await this.updateCustomerActivity(formattedTo);
+
       return response.data;
     } catch (error) {
-      console.error('❌ Error sending flow message:', error.response?.data || error.message);
+      console.error('Error starting WhatsApp flow:', error.response?.data || error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Format phone number to ensure it has country code
+   * @param {String} phoneNumber - Phone number
+   * @returns {String} - Formatted phone number
+   */
+  formatPhoneNumber(phoneNumber) {
+    // Remove any non-digit characters
+    let cleaned = phoneNumber.replace(/\D/g, '');
+    
+    // Ensure it has country code (default to India +91)
+    if (cleaned.length === 10) {
+      cleaned = '91' + cleaned;
+    } else if (cleaned.startsWith('0')) {
+      cleaned = '91' + cleaned.substring(1);
+    }
+    
+    return cleaned;
+  }
+
+  /**
+   * Update customer's last active timestamp
+   * @param {String} phoneNumber - Customer's phone number
+   */
+  async updateCustomerActivity(phoneNumber) {
+    try {
+      // Find customer by phone number
+      const customer = await Customer.findOne({ phone: phoneNumber });
+      
+      if (customer) {
+        // Update last active timestamp and increment login count
+        await Customer.findOneAndUpdate(
+          { _id: customer._id },
+          {
+            $set: {
+              lastActive: new Date(),
+              lastLogin: new Date()
+            },
+            $inc: { loginCount: 1 }
+          }
+        );
+      } else {
+        // Create new customer record
+        await Customer.create({
+          phone: phoneNumber,
+          customerId: `CUST${Date.now()}`,
+          lastActive: new Date(),
+          lastLogin: new Date(),
+          loginCount: 1,
+          accountStatus: 'active',
+          verification: {
+            phone: true
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error updating customer activity:', error);
+      // Don't throw error to prevent message sending failure
     }
   }
 }

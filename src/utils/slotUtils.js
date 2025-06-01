@@ -1,8 +1,8 @@
 // src/utils/slotUtils.js
-const connectToDatabase = require('./connect-to-database');
-const Booking = require('../models/Booking');
-const Court = require('../models/Court').default;
-const SportConfig = require('../models/SportConfig');
+const connectToDatabase = require('./mysql-connection');
+const Booking = require('../models/mysql/Booking');
+const Court = require('../models/mysql/Court');
+const SportConfig = require('../models/mysql/SportConfig');
 
 /**
  * Get available slots for a specific sport, date and duration

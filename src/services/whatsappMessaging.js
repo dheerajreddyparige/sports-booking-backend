@@ -6,7 +6,8 @@
 const whatsappService = require('./whatsapp');
 const whatsappMessageTemplates = require('../utils/whatsappMessageTemplates');
 const { formatTemplateComponents } = require('../utils/whatsappTemplates');
-const Booking = require('../models/Booking'); // Add missing Booking model import
+const Booking = require('../models/mysql/Booking.js');
+const Court = require('../models/mysql/Court.js');
 
 /**
  * Sends a welcome template message with badminton image followed by booking options
@@ -131,11 +132,11 @@ async function processIncomingMessage(message) {
     console.log(`🔄 Processing incoming ${type} message from ${from} (ID: ${messageId})`);
     
     // Connect to database
-    const connectToDatabase = require('../utils/connect-to-database');
+    const connectToDatabase = require('../utils/mysql-connection.js');
     await connectToDatabase();
     
     // Check if this message has already been processed
-    const FlowsState = require('../models/FlowsState');
+    const FlowsState = require('../models/mysql/FlowsState');
     const existingState = await FlowsState.findOne({
       phoneNumber: from,
       processedMessages: messageId
@@ -172,11 +173,11 @@ async function processIncomingMessage(message) {
       
       // Check for keywords in the message
       if (messageText.includes('hello') || messageText.includes('hi') || messageText.includes('start')) {
-        // Send only the welcome message with badminton image
-        await sendWelcomeMessage(from);
+        // Send welcome message with language selection
+        await sendLanguageSelectionMessage(from);
         
         // Update flow state
-        flowState.screen = 'welcome';
+        flowState.screen = 'language_selection';
         await flowState.save();
       }
     } else if (type === 'interactive') {
@@ -186,13 +187,46 @@ async function processIncomingMessage(message) {
       if (interactive.type === 'button_reply') {
         const buttonId = interactive.button_reply.id;
         
-        if (buttonId === 'new_booking') {
-          // Send sports selection list
-          await sendSportsSelectionList(from);
+        if (buttonId === 'language_english') {
+          // User selected English language
+          flowState.language = 'english';
+          await sendMainMenuMessage(from);
           
           // Update flow state
-          flowState.screen = 'sport_selection';
+          flowState.screen = 'main_menu';
           await flowState.save();
+        } else if (buttonId === 'language_telugu') {
+          // User selected Telugu language (to be implemented later)
+          flowState.language = 'telugu';
+          await whatsappService.sendTextMessage(from, 'Telugu language support coming soon! Please select English for now.');
+          await sendLanguageSelectionMessage(from);
+          
+          // Keep in language selection
+          flowState.screen = 'language_selection';
+          await flowState.save();
+        } else if (buttonId === 'new_booking') {
+          // Send WhatsApp Flow for booking
+          await sendBookingFlow(from);
+          
+          // Update flow state
+          flowState.screen = 'booking_flow';
+          await flowState.save();
+        } else if (buttonId === 'my_bookings') {
+          // Get user's bookings from database
+          const Booking = require('../models/mysql/Booking');
+          const bookings = await Booking.find({ customerPhone: from }).sort({ date: -1 }).limit(5);
+          
+          // Create and send bookings list template
+          const messageTemplates = require('../utils/whatsappMessageTemplates');
+          const bookingsTemplate = messageTemplates.createUserBookingsTemplate(from, bookings);
+          await whatsappService.sendRawMessage(bookingsTemplate);
+          
+          // Update flow state
+          flowState.screen = 'view_bookings';
+          await flowState.save();
+        } else if (buttonId === 'available_slots') {
+          // Send available time slots
+          await whatsappService.sendTextMessage(from, 'Available time slots feature coming soon!');
         } else if (buttonId === 'view_bookings') {
           // Get user's bookings from database
           const Booking = require('../models/Booking');
@@ -950,8 +984,8 @@ async function sendAvailableTimeSlots(phoneNumber, sportId, selectedDate, durati
       slotRows = slotRows.slice(0, SLOTS_PER_PAGE);
     }
     // Save available slots and page info in flow state
-    const FlowsState = require('../models/FlowsState');
-    const connectToDatabase = require('../utils/connect-to-database');
+    const FlowsState = require('../models/mysql/FlowsState');
+    const connectToDatabase = require('../utils/mysql-connection.js');
     await connectToDatabase();
     let flowState = await FlowsState.findOne({ phoneNumber }).sort({ updatedAt: -1 });
     if (!flowState) {
@@ -1108,7 +1142,7 @@ async function createBooking(phoneNumber, slotId) {
     const rawSlotId = slotId.replace('slot_', '');
     
     // Retrieve booking information from the flow state
-    const FlowsState = require('../models/FlowsState');
+    const FlowsState = require('../models/mysql/FlowsState');
     const Booking = require('../models/Booking');
     const Court = require('../models/Court').default;
     const connectToDatabase = require('../utils/connect-to-database');
@@ -1207,7 +1241,7 @@ async function getBookingDetails(slotId) {
     const rawSlotId = slotId.replace('slot_', '');
     
     // Retrieve booking information from the flow state
-    const FlowsState = require('../models/FlowsState');
+    const FlowsState = require('../models/mysql/FlowsState');
     const connectToDatabase = require('../utils/connect-to-database');
     await connectToDatabase();
     
@@ -1407,6 +1441,182 @@ async function sendDurationSelection(phoneNumber, sport, selectedDate) {
   }
 }
 
+/**
+ * Sends language selection message to user
+ * @param {string} phoneNumber - Recipient's phone number
+ * @returns {Promise<Object>} - API response
+ */
+async function sendLanguageSelectionMessage(phoneNumber) {
+  try {
+    console.log('🔄 Sending language selection message...');
+    
+    const languageMessage = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phoneNumber,
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        header: {
+          type: 'image',
+          image: {
+            link: 'https://media.istockphoto.com/id/1033954336/photo/badminton-courts-with-players-competing.jpg?b=1&s=612x612&w=0&k=20&c=i2COuM0oYyXWcAgByGWFlImExjdtHiOM7orLhabf2sE='
+          }
+        },
+        body: {
+          text: 'Welcome to PitZone - The Best Sports Facility! 🏸⚽🏓\n\nPlease select your preferred language:'
+        },
+        action: {
+          buttons: [
+            {
+              type: 'reply',
+              reply: {
+                id: 'language_english',
+                title: 'English'
+              }
+            },
+            {
+              type: 'reply',
+              reply: {
+                id: 'language_telugu',
+                title: 'తెలుగు (Telugu)'
+              }
+            }
+          ]
+        }
+      }
+    };
+    
+    const response = await whatsappService.sendRawMessage(languageMessage);
+    console.log('✅ Language selection message sent successfully');
+    return response;
+  } catch (error) {
+    console.error('❌ Error sending language selection message:', error);
+    throw error;
+  }
+}
+
+/**
+ * Sends main menu message with booking options
+ * @param {string} phoneNumber - Recipient's phone number
+ * @returns {Promise<Object>} - API response
+ */
+async function sendMainMenuMessage(phoneNumber) {
+  try {
+    console.log('🔄 Sending main menu message...');
+    
+    const mainMenuMessage = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phoneNumber,
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        header: {
+          type: 'text',
+          text: 'Main Menu'
+        },
+        body: {
+          text: 'What would you like to do today?'
+        },
+        footer: {
+          text: 'Select an option from the menu'
+        },
+        action: {
+          button: 'Select Option',
+          sections: [
+            {
+              title: 'Booking Options',
+              rows: [
+                {
+                  id: 'new_booking',
+                  title: 'New Booking',
+                  description: 'Book a new sports session'
+                },
+                {
+                  id: 'my_bookings',
+                  title: 'My Bookings',
+                  description: 'View your existing bookings'
+                },
+                {
+                  id: 'available_slots',
+                  title: 'Available Time Slots',
+                  description: 'Check available time slots'
+                }
+              ]
+            }
+          ]
+        }
+      }
+    };
+    
+    const response = await whatsappService.sendRawMessage(mainMenuMessage);
+    console.log('✅ Main menu message sent successfully');
+    return response;
+  } catch (error) {
+    console.error('❌ Error sending main menu message:', error);
+    throw error;
+  }
+}
+
+/**
+ * Sends WhatsApp Flow for booking process
+ * @param {string} phoneNumber - Recipient's phone number
+ * @returns {Promise<Object>} - API response
+ */
+async function sendBookingFlow(phoneNumber) {
+  try {
+    console.log('🔄 Sending booking flow...');
+    
+    // Generate a unique flow token
+    const flowToken = `booking_${phoneNumber}_${Date.now()}`;
+    
+    const flowMessage = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phoneNumber,
+      type: 'interactive',
+      interactive: {
+        type: 'flow',
+        header: {
+          type: 'text',
+          text: 'Sports Booking'
+        },
+        body: {
+          text: 'Please fill in your booking details'
+        },
+        footer: {
+          text: 'Complete the form to proceed'
+        },
+        action: {
+          name: 'flow',
+          parameters: {
+            flow_message_version: '3',
+            flow_token: flowToken,
+            flow_id: process.env.WHATSAPP_FLOW_ID || 'YOUR_FLOW_ID',
+            flow_cta: 'Book Now',
+            flow_action: 'navigate',
+            flow_action_payload: {
+              screen: 'BOOKING_SCREEN',
+              data: {
+                flow_token: flowToken,
+                phone_number: phoneNumber
+              }
+            }
+          }
+        }
+      }
+    };
+    
+    const response = await whatsappService.sendRawMessage(flowMessage);
+    console.log('✅ Booking flow sent successfully');
+    return response;
+  } catch (error) {
+    console.error('❌ Error sending booking flow:', error);
+    throw error;
+  }
+}
+
 // Make sure to export the function at the end of the file
 module.exports = {
   sendWelcomeMessage,
@@ -1417,5 +1627,8 @@ module.exports = {
   sendDurationSelection,
   sendAvailableTimeSlots,
   createBooking,
-  getBookingDetails
+  getBookingDetails,
+  sendLanguageSelectionMessage,
+  sendMainMenuMessage,
+  sendBookingFlow
 };

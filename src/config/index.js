@@ -5,9 +5,12 @@
 require('dotenv').config();
 
 module.exports = {
-  // Database configuration
-  database: {
-    uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/sports-booking',
+  mysql: {
+    host: process.env.MYSQL_HOST || 'localhost',
+    user: process.env.MYSQL_USER || 'root',
+    password: process.env.MYSQL_PASSWORD || '',
+    database: process.env.MYSQL_DATABASE || 'sports_booking',
+    port: process.env.MYSQL_PORT || 3306
   },
   
   // WhatsApp configuration

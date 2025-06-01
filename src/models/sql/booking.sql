@@ -1,0 +1,36 @@
+-- Booking table schema
+CREATE TABLE IF NOT EXISTS booking (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  sport ENUM('badminton', 'cricket', 'pickleball') NOT NULL,
+  court_id INT NOT NULL,
+  date DATE NOT NULL,
+  start_time VARCHAR(10) NOT NULL,
+  end_time VARCHAR(10) NOT NULL,
+  duration INT NOT NULL,
+  customer_id INT,
+  customer_name VARCHAR(100) NOT NULL,
+  customer_email VARCHAR(100),
+  customer_phone VARCHAR(20) NOT NULL,
+  special_requirements TEXT,
+  status ENUM('confirmed', 'pending', 'cancelled', 'payment_pending', 'refunded') DEFAULT 'pending',
+  amount DECIMAL(10, 2) NOT NULL,
+  currency VARCHAR(3) DEFAULT 'INR',
+  payment_method ENUM('razorpay', 'paytm', 'whatsapp_pay', 'cash') DEFAULT 'razorpay',
+  payment_status ENUM('pending', 'paid', 'failed', 'refunded') DEFAULT 'pending',
+  transaction_id VARCHAR(100),
+  payment_receipt VARCHAR(255),
+  payment_initiated_at TIMESTAMP NULL,
+  payment_completed_at TIMESTAMP NULL,
+  session_token VARCHAR(255),
+  flow_token VARCHAR(255),
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  INDEX (sport, date, court_id),
+  INDEX (customer_id),
+  INDEX (flow_token),
+  INDEX (session_token),
+  
+  FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

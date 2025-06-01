@@ -1,9 +1,9 @@
 // src/util/flowDbUtils.js
-const connectToDatabase = require('./connect-to-database');
-const FlowsState = require('../models/FlowsState');
-const Booking = require('../models/Booking');
-const Court = require('../models/Court').default;
-const SportConfig = require('../models/SportConfig');
+const connectToDatabase = require('../utils/mysql-connection.js');
+const FlowsState = require('../models/mysql/FlowsState');
+const Booking = require('../models/mysql/Booking');
+const Court = require('../models/mysql/Court');
+const SportConfig = require('../models/mysql/SportConfig');
 const slotUtils = require('./slotUtils');
 
 /**
@@ -83,9 +83,8 @@ async function getSportsFacilities() {
       return acc;
     }, {});
     
-    // Format for WhatsApp Flows - limit to 10 sports max (WhatsApp limit)
+    
     const formattedSports = Object.entries(sportsFacilities)
-      .slice(0, 10)
       .map(([sport, courts]) => ({
         id: sport,
         title: sport.charAt(0).toUpperCase() + sport.slice(1),

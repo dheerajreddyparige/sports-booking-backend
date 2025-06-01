@@ -6,7 +6,7 @@
  */
 
 const flowDbUtils = require('./flowDbUtils');
-const connectToDatabase = require('./connect-to-database');
+const connectToDatabase = require('../utils/mysql-connection.js');
 const WHATSAPP_FLOW = require('../config/whatsappFlow');
 
 // Screen responses based on WhatsApp Flow configuration
@@ -16,7 +16,25 @@ const SCREEN_RESPONSES = {
     data: {
       sports: [],
       durations: [],
-      time_slots: [], // Ensure this is initialized as an empty array
+      time_slots: [], 
+    },
+  },
+  DETAILS: {
+    screen: "DETAILS",
+    data: {
+      sport: "",
+      date: "",
+      duration: "",
+      time_slot: "",
+      total_amount: "",
+      discount_info: "",
+      name: "",
+      phone: "",
+      email: "",
+      is_existing_customer: false,
+      is_name_enabled: true,
+      is_phone_enabled: true,
+      is_email_enabled: true,
     },
   },
   SUMMARY: {
@@ -32,6 +50,7 @@ const SCREEN_RESPONSES = {
       name: "",
       phone: "",
       email: "",
+      cancellation_policy: "",
     },
   },
   SUCCESS: {
@@ -63,7 +82,7 @@ const getNextScreen = async (decryptedBody) => {
   
   if (action === "ping") {
     console.log('📡 Ping request received, responding with active status');
-    return { data: { status: "active" } };
+    return {version, data: { status: "active" } };
   }
 
   if (data?.error) {
@@ -193,11 +212,11 @@ const getNextScreen = async (decryptedBody) => {
           
           // Check if this is a footer click (transition to next screen)
           // If the footer is enabled and the request came from a footer click
-          // (indicated by all required fields being present), transition to SUMMARY screen
+          // (indicated by all required fields being present), transition to DETAILS screen
           if (data.is_footer_enabled === true || 
               (mergedData.sport && mergedData.date && mergedData.duration && mergedData.time_slot && 
                data.time_slot)) {
-            console.log('🔄 Footer clicked, transitioning to SUMMARY screen');
+            console.log('🔄 Footer clicked, transitioning to DETAILS screen');
             
             // Calculate total amount based on duration, sport, date and time using dynamic configuration
             console.log('💰 Calculating price dynamically based on sport, duration, date and time');
@@ -206,20 +225,40 @@ const getNextScreen = async (decryptedBody) => {
             // Extract price details
             const { baseRate, totalBeforeDiscount, discountPercent, discountAmount, totalAmount } = priceDetails;
             
+            // Get customer phone number from flow token (assuming it's stored in flow state)
+            const flowState = await flowDbUtils.getFlowState(flow_token);
+            const phoneNumber = flowState?.phoneNumber || '';
+            
+            // Check if customer exists
+            let existingCustomer = null;
+            if (phoneNumber) {
+              try {
+                existingCustomer = await flowDbUtils.getCustomerByPhone(phoneNumber);
+                console.log('👤 Customer lookup result:', existingCustomer ? 'Found existing customer' : 'New customer');
+              } catch (error) {
+                console.error('❌ Error looking up customer:', error);
+              }
+            }
+            
             return {
-              screen: "SUMMARY", // Change screen to SUMMARY according to routing model
+              screen: "DETAILS", // Change screen to DETAILS for customer information
               data: {
-                ...SCREEN_RESPONSES.SUMMARY.data,
+                ...SCREEN_RESPONSES.DETAILS.data,
                 sport: mergedData.sport || "",
                 date: mergedData.date || "",
                 duration: mergedData.duration || "",
                 time_slot: mergedData.time_slot || "",
                 discount_info: discountPercent > 0 ? `You qualify for ${discountPercent}% off!` : "",
                 total_amount: totalAmount.toString(),
-                base_rate: baseRate.toString(),
-                // Add time and day specific pricing information
-                rate_info: priceDetails.dayType && priceDetails.timePeriod ? 
-                  `${priceDetails.dayType.charAt(0).toUpperCase() + priceDetails.dayType.slice(1)} ${priceDetails.timePeriod} rate applied` : "",
+                // Pre-fill customer data if existing customer
+                name: existingCustomer?.name || "",
+                phone: existingCustomer?.phoneNumber || phoneNumber || "",
+                email: existingCustomer?.email || "",
+                is_existing_customer: !!existingCustomer,
+                // Disable fields for existing customers
+                is_name_enabled: !existingCustomer,
+                is_phone_enabled: !existingCustomer,
+                is_email_enabled: !existingCustomer || !existingCustomer.email,
               },
             };
           }
@@ -512,6 +551,68 @@ const getNextScreen = async (decryptedBody) => {
         } catch (error) {
           console.error("❌ Error processing BOOKING data exchange:", error);
           return { ...SCREEN_RESPONSES.BOOKING };
+        }
+        
+      case "DETAILS":
+        try {
+          console.log('👤 Processing DETAILS screen for customer information');
+          
+          // Get current state
+          const currentState = await flowDbUtils.getFlowState(flow_token) || {};
+          const mergedData = { ...currentState, ...data };
+          
+          console.log('📋 Customer details received:', {
+            name: data.name,
+            phone: data.phone,
+            email: data.email,
+            isExisting: mergedData.is_existing_customer
+          });
+          
+          // Save customer details to flow state
+          await flowDbUtils.saveFlowState(flow_token, "DETAILS", mergedData);
+          
+          // Create or update customer in database
+          if (data.name && data.phone) {
+            try {
+              const customerData = {
+                name: data.name,
+                phoneNumber: data.phone,
+                email: data.email || '',
+                whatsappId: mergedData.phoneNumber || data.phone, // Use WhatsApp number
+                isActive: true,
+                isVerified: true
+              };
+              
+              console.log('💾 Creating/updating customer:', customerData);
+              const customer = await flowDbUtils.createOrUpdateCustomer(customerData);
+              console.log('✅ Customer saved successfully:', customer.id);
+            } catch (error) {
+              console.error('❌ Error saving customer:', error);
+              // Continue with flow even if customer save fails
+            }
+          }
+          
+          // Transition to SUMMARY screen with all collected data
+          return {
+            screen: "SUMMARY",
+            data: {
+              ...SCREEN_RESPONSES.SUMMARY.data,
+              sport: mergedData.sport || "",
+              date: mergedData.date || "",
+              duration: mergedData.duration || "",
+              time_slot: mergedData.time_slot || "",
+              total_amount: mergedData.total_amount || "",
+              discount_info: mergedData.discount_info || "",
+              name: data.name || "",
+              phone: data.phone || "",
+              email: data.email || "",
+              terms: "By booking, you agree to arrive 10 minutes early. Late arrivals may result in reduced playing time. Equipment rental available on-site.",
+              cancellation_policy: "100% refund: Cancel >2 hours before booking.\n75% refund: Cancel 1-2 hours before.\nNo refund: Cancel <1 hour before."
+            },
+          };
+        } catch (error) {
+          console.error("❌ Error processing DETAILS screen:", error);
+          return { ...SCREEN_RESPONSES.DETAILS };
         }
         
       case "SUMMARY":
