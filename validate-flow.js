@@ -2,6 +2,9 @@
 const whatsappFlow = require('./src/config/whatsappFlow');
 console.log('Loading WhatsApp Flow configuration...');
 
+// Check if whatsappFlow is loaded correctly
+console.log('WhatsApp Flow loaded with', whatsappFlow.screens.length, 'screens');
+
 // Check SUMMARY screen
 const summaryScreen = whatsappFlow.screens.find(s => s.id === 'SUMMARY');
 if (!summaryScreen) {
@@ -11,31 +14,6 @@ if (!summaryScreen) {
 
 console.log('✅ SUMMARY screen found');
 
-// Check the apply coupon button
-const couponButton = summaryScreen.layout.children[4];
-console.log('\nApply Coupon Button:');
-console.log('Type:', couponButton.type);
-console.log('Name:', couponButton.name);
-console.log('Label:', couponButton.label);
-console.log('Has on-click-action:', !!couponButton['on-click-action']);
-
-if (couponButton.type !== 'Button') {
-  console.error('❌ Apply coupon component should be a Button!');
-  process.exit(1);
-}
-
-if (!couponButton.label) {
-  console.error('❌ Button is missing required label property!');
-  process.exit(1);
-}
-
-if (!couponButton['on-click-action']) {
-  console.error('❌ Button is missing required on-click-action property!');
-  process.exit(1);
-}
-
-console.log('\n✅ Apply coupon button configuration is valid');
-
 // Validate all screens in the flow
 console.log('\nValidating all screens in the flow:');
 for (const screen of whatsappFlow.screens) {
@@ -44,6 +22,14 @@ for (const screen of whatsappFlow.screens) {
   // Check if screen has required properties
   if (!screen.id || !screen.layout) {
     console.error(`❌ Screen ${screen.id} is missing required properties!`);
+    process.exit(1);
+  }
+  
+  // Count Footer components
+  const footerCount = screen.layout.children.filter(c => c.type === 'Footer').length;
+  console.log(`Found ${footerCount} Footer components in screen ${screen.id}`);
+  if (footerCount > 1) {
+    console.error(`❌ Screen ${screen.id} has ${footerCount} Footer components. Maximum allowed is 1.`);
     process.exit(1);
   }
   
@@ -69,6 +55,31 @@ for (const screen of whatsappFlow.screens) {
     if (component.type === 'Button' && !component['on-click-action']) {
       console.error(`❌ Button in screen ${screen.id} is missing required on-click-action property!`);
       process.exit(1);
+    }
+    
+    // Check DatePicker format
+    if (component.type === 'DatePicker') {
+      console.log(`Checking DatePicker in screen ${screen.id}`);
+      console.log(`min-date: ${component['min-date']}`);
+      console.log(`max-date: ${component['max-date']}`);
+      
+      // Check if min-date is using dynamic binding
+      if (component['min-date'] && component['min-date'].includes('${data.')) {
+        console.log(`✅ DatePicker in screen ${screen.id} is using dynamic min-date binding`);
+      } else if (component['min-date'] && typeof component['min-date'] === 'string' && 
+          !component['min-date'].match(/^\d{4}-\d{2}-\d{2}$/)) {
+        console.error(`❌ DatePicker in screen ${screen.id} has invalid min-date format. Should be YYYY-MM-DD.`);
+        process.exit(1);
+      }
+      
+      // Check if max-date is using dynamic binding
+      if (component['max-date'] && component['max-date'].includes('${data.')) {
+        console.log(`✅ DatePicker in screen ${screen.id} is using dynamic max-date binding`);
+      } else if (component['max-date'] && typeof component['max-date'] === 'string' && 
+          !component['max-date'].match(/^\d{4}-\d{2}-\d{2}$/)) {
+        console.error(`❌ DatePicker in screen ${screen.id} has invalid max-date format. Should be YYYY-MM-DD.`);
+        process.exit(1);
+      }
     }
   }
   

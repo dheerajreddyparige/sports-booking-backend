@@ -59,7 +59,7 @@ const SCREEN_RESPONSES = {
   SUCCESS: {
     screen: "SUCCESS",
     data: {
-      invoice_url: WHATSAPP_FLOW.screens.find(s => s.id === "SUCCESS").data.invoice_url,
+      invoice_url: "",
       extension_message_response: {
         params: {
           flow_token: "REPLACE_FLOW_TOKEN",
@@ -287,7 +287,6 @@ const getNextScreen = async (decryptedBody) => {
         {"id": "4", "title": "4 Hours", "description":"","metadata": `${defaultSportConfig.discounts.fourHour}% off` }
       ];
   
-    
       // Define default time slots (to avoid Dropdown error)
       const formattedTimeSlots = [
         { id: "09:00-10:00", title: "9:00 AM - 10:00 AM" },
@@ -297,6 +296,16 @@ const getNextScreen = async (decryptedBody) => {
       console.log('📅 Fetching available dates...');
       const availableDates = await flowDbUtils.getAvailableDates();
       console.log(`✅ Found ${availableDates.length} available dates`);
+      
+      // Generate dynamic date range for DatePicker (today to next 7 days)
+      const today = new Date();
+      const todayFormatted = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+      
+      const maxDate = new Date();
+      maxDate.setDate(today.getDate() + 7); // 7 days from today
+      const maxDateFormatted = maxDate.toISOString().split('T')[0];
+      
+      console.log(`📅 Setting date range: ${todayFormatted} to ${maxDateFormatted}`);
       
       console.log('💾 Saving initial flow state...');
       const initialState = {
@@ -309,7 +318,9 @@ const getNextScreen = async (decryptedBody) => {
         is_date_enabled: false,
         is_duration_enabled: false,
         is_time_slots_enabled: false,
-        is_footer_enabled: false
+        is_footer_enabled: false,
+        min_date: todayFormatted,
+        max_date: maxDateFormatted
       };
       
       await flowDbUtils.saveFlowState(flow_token, "BOOKING", initialState);
@@ -329,7 +340,9 @@ const getNextScreen = async (decryptedBody) => {
           is_date_enabled: false,
           is_duration_enabled: false,
           is_time_slots_enabled: false,
-          is_footer_enabled: false
+          is_footer_enabled: false,
+          min_date: todayFormatted,
+          max_date: maxDateFormatted
         },
       };
     } catch (error) {
@@ -369,7 +382,7 @@ const getNextScreen = async (decryptedBody) => {
           // Log the received data for debugging
           console.log("Received data_exchange with data:", JSON.stringify(data, null, 2));
           
-          // Merge new data with existing data
+          // Merge new data with existing data - prioritize new data
           const mergedData = { ...currentState, ...data };
           console.log('🔄 Merged data:', JSON.stringify(mergedData, null, 2));
           
@@ -392,12 +405,19 @@ const getNextScreen = async (decryptedBody) => {
           });
           console.log("Visibility flags:", visibilityFlags);
           
-          // Save the updated state with visibility flags
-          console.log('💾 Saving updated flow state...');
-          await flowDbUtils.saveFlowState(flow_token, "BOOKING", {
+          // Ensure consistent property names for saving to flow state
+          const stateData = {
             ...mergedData,
             ...visibilityFlags
-          });
+          };
+          
+          // Remove any duplicate fields that might cause confusion
+          delete stateData.timeSlot; // Use only time_slot
+          delete stateData.phoneNumber; // Use only phone
+          
+          // Save the updated state with visibility flags
+          console.log('💾 Saving updated flow state...');
+          await flowDbUtils.saveFlowState(flow_token, "BOOKING", stateData);
           console.log('✅ Flow state updated');
           
           // Check if this is a footer click (transition to next screen)
@@ -452,7 +472,7 @@ const getNextScreen = async (decryptedBody) => {
                 sport: mergedData.sport || "",
                 date: mergedData.date || "",
                 duration: mergedData.duration || "",
-                time_slot: mergedData.time_slot || "",
+                time_slot: mergedData.time_slot,
                 discount_info: discountInfo || "",
                 total_amount: finalAmount.toString(),
                 original_amount: originalAmount.toString(),
@@ -462,7 +482,10 @@ const getNextScreen = async (decryptedBody) => {
                 email: existingCustomer?.email || "",
                 is_existing_customer: isExistingCustomer,
                 show_new_customer_message: !isExistingCustomer,
-                show_existing_customer_message: isExistingCustomer
+                show_existing_customer_message: isExistingCustomer,
+                // Pass date range
+                min_date: mergedData.min_date,
+                max_date: mergedData.max_date
               },
             };
           }
@@ -540,7 +563,7 @@ const getNextScreen = async (decryptedBody) => {
               sport: mergedData.sport || "",
               date: mergedData.date || "",
               duration: mergedData.duration || "",
-              time_slot: mergedData.time_slot || "",
+              time_slot: mergedData.time_slot,
               is_date_enabled: visibilityFlags.is_date_enabled,
               is_duration_enabled: visibilityFlags.is_duration_enabled,
               is_time_slots_enabled: visibilityFlags.is_time_slots_enabled,
@@ -559,7 +582,7 @@ const getNextScreen = async (decryptedBody) => {
           const currentState = await flowDbUtils.getFlowState(flow_token) || {};
           console.log('📋 Current flow state:', JSON.stringify(currentState, null, 2));
           
-          // Merge new data with existing data
+          // Merge new data with existing data - prioritize new data
           const mergedData = { ...currentState, ...data };
           console.log('🔄 Merged data:', JSON.stringify(mergedData, null, 2));
           
@@ -594,30 +617,33 @@ const getNextScreen = async (decryptedBody) => {
             mergedData.phone = data.phone;
             mergedData.email = data.email;
             
-            // Calculate price details if not already calculated
-            let priceDetails;
+            // Preserve the duration and time_slot from the previous screen if they exist
+            // When retrieving from flow state, the properties are camelCase (timeSlot) but in our application logic we use snake_case (time_slot)
+            const duration = mergedData.duration || currentState.duration || "1";
+            const timeSlot = mergedData.time_slot || currentState.time_slot || "";
             
-            // Ensure duration has a valid value (default to 1 if empty or invalid)
-            if (!mergedData.duration || isNaN(parseFloat(mergedData.duration))) {
-              console.log('⚠️ Duration is missing or invalid, defaulting to 1 hour');
-              mergedData.duration = "1";
-            } else {
-              // Ensure duration is preserved as a string
-              console.log('✅ Using existing duration value:', mergedData.duration);
-              mergedData.duration = mergedData.duration.toString();
-            }
+            // Calculate price details
+            console.log('💰 Calculating price details with duration:', duration);
+            const priceDetails = flowDbUtils.calculatePriceHelper(mergedData.sport, parseFloat(duration));
             
-            console.log('💰 Calculating price details with duration:', mergedData.duration);
-            priceDetails = flowDbUtils.calculatePriceHelper(mergedData.sport, parseFloat(mergedData.duration));
-            
-            mergedData.total_amount = priceDetails.finalAmount;
-            mergedData.original_amount = priceDetails.originalAmount;
+            // Ensure amounts are stored as strings
+            mergedData.total_amount = priceDetails.finalAmount.toString();
+            mergedData.original_amount = priceDetails.originalAmount.toString();
             mergedData.discount_info = priceDetails.discountInfo;
+            mergedData.duration = duration; // Ensure duration is preserved
+            mergedData.time_slot = timeSlot; // Ensure time_slot is preserved
             
             // Format details for display in SUMMARY screen
-            const bookingDetails = flowDbUtils.formatBookingDetails(mergedData);
-            const customerDetails = flowDbUtils.formatCustomerDetails(mergedData);
-            const priceDiff = flowDbUtils.formatPriceDifference(mergedData);
+            const bookingDetails = `📅 ${mergedData.sport} - ${mergedData.date}\n⏰ ${timeSlot}\n⌛ Duration: ${duration} hour(s)`;
+            const customerDetails = `👤 ${mergedData.name}\n📱 ${mergedData.phone}\n✉️ ${mergedData.email}`;
+            
+            // Format payment details with original amount striked off if discount is applied
+            let paymentDetails = "";
+            if (priceDetails.discountPercent > 0) {
+                paymentDetails = `💰 Original Amount: ~₹${mergedData.original_amount}~\n${priceDetails.discountInfo}\n💵 Final Amount: ₹${mergedData.total_amount}`;
+            } else {
+                paymentDetails = `💰 Amount: ₹${mergedData.total_amount}`;
+            }
             
             console.log('💾 Saving updated flow state with customer info...');
             await flowDbUtils.saveFlowState(flow_token, "SUMMARY", mergedData);
@@ -629,8 +655,8 @@ const getNextScreen = async (decryptedBody) => {
                 ...SCREEN_RESPONSES.SUMMARY.data,
                 sport: mergedData.sport || "",
                 date: mergedData.date || "",
-                duration: mergedData.duration || "1", // Ensure duration has a value
-                time_slot: mergedData.time_slot || "",
+                duration: duration, // Use the preserved duration
+                time_slot: timeSlot, // Use the preserved time_slot
                 total_amount: mergedData.total_amount || "",
                 original_amount: mergedData.original_amount || "",
                 discount_info: mergedData.discount_info || "",
@@ -639,9 +665,9 @@ const getNextScreen = async (decryptedBody) => {
                 email: mergedData.email || "",
                 bookingdetails: bookingDetails,
                 customerdetails: customerDetails,
-                pricediff: priceDiff,
-                coupon_applied: false,
-                has_coupon_error: false
+                paymentdetails: paymentDetails,
+                min_date: mergedData.min_date,
+                max_date: mergedData.max_date
               }
             };
           }
@@ -680,132 +706,6 @@ const getNextScreen = async (decryptedBody) => {
           const mergedData = { ...currentState, ...data };
           console.log('🔄 Merged data:', JSON.stringify(mergedData, null, 2));
           
-          // Check if this includes a coupon application request
-          if (data.apply_coupon || data.coupon) {
-            console.log('🎟️ Validating coupon:', data.coupon || mergedData.coupon);
-            
-            // Validate coupon
-            try {
-              const couponCode = data.coupon || mergedData.coupon;
-              
-              // Skip validation if coupon code is empty
-              if (!couponCode || couponCode.trim() === '') {
-                console.log('⚠️ Empty coupon code, skipping validation');
-                
-                // If there was a previously applied coupon, remove its effects
-                if (mergedData.coupon_applied) {
-                  console.log('🔄 Removing previously applied coupon');
-                  
-                  // Recalculate price without coupon
-                  if (!mergedData.duration || isNaN(parseFloat(mergedData.duration))) {
-                    mergedData.duration = "1"; // Default to 1 hour if duration is invalid
-                  }
-                  
-                  const recalculatedPrice = flowDbUtils.calculatePriceHelper(mergedData.sport, parseFloat(mergedData.duration));
-                  mergedData.total_amount = recalculatedPrice.finalAmount;
-                  mergedData.original_amount = recalculatedPrice.originalAmount;
-                  mergedData.discount_info = recalculatedPrice.discountInfo;
-                  
-                  // Reset coupon-related fields
-                  mergedData.coupon_applied = false;
-                  mergedData.has_coupon_error = false;
-                  mergedData.coupon = '';
-                  mergedData.coupon_discount = '0';
-                  
-                  // Update formatted display data
-                  mergedData.bookingdetails = flowDbUtils.formatBookingDetails(mergedData);
-                  mergedData.pricediff = flowDbUtils.formatPriceDifference(mergedData);
-                  
-                  console.log('💾 Saving updated flow state after coupon removal...');
-                  await flowDbUtils.saveFlowState(flow_token, "SUMMARY", mergedData);
-                  
-                  return {
-                    screen: "SUMMARY",
-                    data: {
-                      ...SCREEN_RESPONSES.SUMMARY.data,
-                      ...mergedData
-                    }
-                  };
-                }
-                
-                // If no coupon was applied before, just continue with the current state
-                return {
-                  screen: "SUMMARY",
-                  data: {
-                    ...SCREEN_RESPONSES.SUMMARY.data,
-                    ...mergedData,
-                    has_coupon_error: false
-                  }
-                };
-              }
-              
-              // Ensure we have a valid total_amount before validating the coupon
-              const totalAmount = parseFloat(mergedData.total_amount);
-              if (isNaN(totalAmount)) {
-                console.error('❌ Invalid total_amount for coupon validation:', mergedData.total_amount);
-                
-                // Recalculate price if total amount is NaN
-                if (!mergedData.duration || isNaN(parseFloat(mergedData.duration))) {
-                  mergedData.duration = "1"; // Default to 1 hour if duration is invalid
-                }
-                
-                const recalculatedPrice = flowDbUtils.calculatePriceHelper(mergedData.sport, parseFloat(mergedData.duration));
-                mergedData.total_amount = recalculatedPrice.finalAmount;
-                mergedData.original_amount = recalculatedPrice.originalAmount;
-                mergedData.discount_info = recalculatedPrice.discountInfo;
-              }
-              
-              const couponResult = flowDbUtils.validateCouponHelper(
-                couponCode,
-                parseFloat(mergedData.total_amount)
-              );
-              
-              // Update merged data with coupon result
-              if (couponResult.valid) {
-                console.log('✅ Valid coupon:', couponResult);
-                mergedData.coupon_applied = true;
-                mergedData.has_coupon_error = false;
-                mergedData.coupon = couponResult.couponCode;
-                mergedData.coupon_discount = couponResult.discountAmount;
-                mergedData.total_amount = couponResult.finalAmount;
-                mergedData.discount_info = couponResult.discountInfo;
-              } else {
-                console.log('❌ Invalid coupon:', couponResult);
-                mergedData.coupon_applied = false;
-                mergedData.has_coupon_error = true;
-                mergedData.coupon_error = couponResult.couponError;
-              }
-              
-              // Update formatted display data
-              mergedData.bookingdetails = flowDbUtils.formatBookingDetails(mergedData);
-              mergedData.pricediff = flowDbUtils.formatPriceDifference(mergedData);
-              
-              console.log('💾 Saving updated flow state with coupon info...');
-              await flowDbUtils.saveFlowState(flow_token, "SUMMARY", mergedData);
-              console.log('✅ Flow state updated');
-              
-              // Return updated data for same screen
-              return {
-                screen: "SUMMARY",
-                data: {
-                  ...SCREEN_RESPONSES.SUMMARY.data,
-                  ...mergedData
-                }
-              };
-            } catch (error) {
-              console.error('❌ Error validating coupon:', error);
-              return {
-                screen: "SUMMARY",
-                data: {
-                  ...SCREEN_RESPONSES.SUMMARY.data,
-                  ...mergedData,
-                  has_coupon_error: true,
-                  coupon_error: "Error validating coupon. Please try again."
-                }
-              };
-            }
-          }
-          
           // Check if this is a complete booking request (agree_terms and agree_cancellation are true)
           if (data.agree_terms && data.agree_cancellation) {
             console.log('✅ Booking confirmed, processing payment...');
@@ -820,8 +720,7 @@ const getNextScreen = async (decryptedBody) => {
                 customer_name: mergedData.name,
                 customer_phone: mergedData.phone,
                 customer_email: mergedData.email,
-                amount: mergedData.total_amount,
-                coupon: mergedData.coupon || null,
+                amount: mergedData.total_amount.toString(), // Ensure amount is a string
                 status: 'pending'
               };
               
@@ -831,46 +730,110 @@ const getNextScreen = async (decryptedBody) => {
 
               // Check if payment was requested
               if (data.payment_requested) {
-                console.log('💳 Payment requested, generating UPI payment link...');
+                console.log('💳 Payment requested, generating payment links...');
+                console.log('💳 Selected payment method:', data.payment_method);
                 
-                // Generate a UPI payment intent link 
-                const amount = parseFloat(mergedData.total_amount).toFixed(2);
-                const merchantVpa = "pitzoneaa@paytm"; // Replace with your actual VPA
-                const merchantName = "PitZone Sports";
-                const referenceId = bookingId || `order_${Date.now()}`;
-                const description = `Booking for ${mergedData.sport} on ${mergedData.date}`;
+                // Create booking data object for payment link generation
+                const bookingData = {
+                  bookingId,
+                  sport: mergedData.sport,
+                  date: mergedData.date,
+                  duration: mergedData.duration,
+                  time_slot: mergedData.time_slot,
+                  customer_name: mergedData.name,
+                  customer_phone: mergedData.phone,
+                  customer_email: mergedData.email,
+                  amount: mergedData.total_amount
+                };
                 
-                // Generate UPI intent URL
-                const upiLink = `upi://pay?pa=${merchantVpa}&pn=${encodeURIComponent(merchantName)}&tr=${referenceId}&am=${amount}&cu=INR&mode=00&purpose=00&mc=5399&tn=${encodeURIComponent(description)}`;
-                
-                console.log('🔗 Generated UPI payment link:', upiLink);
-                
-                // Generate a fallback web payment URL (e.g., Razorpay)
-                const webPaymentUrl = `https://pitzone-sports.com/payments/${bookingId}`;
-                
-                // Save payment information
-                mergedData.invoice_url = webPaymentUrl;
-                mergedData.upi_link = upiLink;
-                mergedData.booking_id = bookingId;
+                // Generate UPI payment link if UPI payment method is selected
+                if (data.payment_method === 'upi') {
+                  console.log('🔄 Generating UPI payment link...');
+                  
+                  // Use the helper function to generate UPI link
+                  const upiLink = flowDbUtils.generateUpiPaymentLink(bookingData);
+                  
+                  // Update booking with payment information
+                  await flowDbUtils.updateBooking(bookingId, {
+                    upi_link: upiLink,
+                    payment_method: 'upi'
+                  });
+                  
+                  // Save payment link
+                  mergedData.upi_link = upiLink;
+                  mergedData.invoice_url = null;
+                } 
+                // Generate Razorpay payment link if card/online payment method is selected
+                else if (data.payment_method === 'razorpay') {
+                  console.log('🔄 Generating Razorpay payment link...');
+                  try {
+                    // Use the helper function to generate Razorpay link
+                    const invoiceUrl = await flowDbUtils.generateRazorpayLink(bookingData);
+                    
+                    // Update booking with payment information
+                    await flowDbUtils.updateBooking(bookingId, {
+                      invoice_url: invoiceUrl,
+                      payment_method: 'razorpay'
+                    });
+                    
+                    // Save payment link
+                    mergedData.invoice_url = invoiceUrl;
+                    mergedData.upi_link = null;
+                  } catch (razorpayError) {
+                    console.error('❌ Error creating Razorpay payment:', razorpayError);
+                    // Fallback to UPI if Razorpay fails
+                    console.log('🔄 Falling back to UPI payment...');
+                    
+                    // Use the helper function to generate UPI link as fallback
+                    const upiLink = flowDbUtils.generateUpiPaymentLink(bookingData);
+                    
+                    // Update booking with payment information
+                    await flowDbUtils.updateBooking(bookingId, {
+                      upi_link: upiLink,
+                      payment_method: 'upi'
+                    });
+                    
+                    // Save payment link
+                    mergedData.upi_link = upiLink;
+                    mergedData.invoice_url = null;
+                  }
+                }
+                // If payment method is not specified or is an array, default to UPI
+                else {
+                  console.log('⚠️ Payment method not specified or is an array, defaulting to UPI');
+                  
+                  // Use the helper function to generate UPI link
+                  const upiLink = flowDbUtils.generateUpiPaymentLink(bookingData);
+                  
+                  // Update booking with payment information
+                  await flowDbUtils.updateBooking(bookingId, {
+                    upi_link: upiLink,
+                    payment_method: 'upi'
+                  });
+                  
+                  // Save payment link
+                  mergedData.upi_link = upiLink;
+                  mergedData.invoice_url = null;
+                }
               }
               
-              // Transition to SUCCESS screen
+              // Prepare cancellation policy
+              const cancellationPolicy = "100% refund: Cancel >2 hours before booking.\n75% refund: Cancel 1-2 hours before.\nNo refund: Cancel <1 hour before.";
+              
+              // Save the updated state with booking and payment info
+              console.log('💾 Saving final flow state with payment info...');
+              mergedData.booking_id = bookingId;
+              await flowDbUtils.saveFlowState(flow_token, "SUCCESS", mergedData);
+              
+              // Return SUCCESS screen with payment links
               console.log('🔄 Transitioning to SUCCESS screen');
-              
-              // Save final state
-              await flowDbUtils.saveFlowState(flow_token, "SUCCESS", {
-                ...mergedData,
-                booking_id: bookingId
-              });
-              
-              // Generate invoice URL (replace with actual URL generation logic)
-              const invoiceUrl = mergedData.invoice_url || `https://pitzone-sports.com/payments/${bookingId}`;
-              
               return {
                 screen: "SUCCESS",
                 data: {
                   ...SCREEN_RESPONSES.SUCCESS.data,
-                  invoice_url: invoiceUrl,
+                  upi_link: mergedData.upi_link || "",
+                  invoice_url: mergedData.invoice_url || "",
+                  cancellation_policy: cancellationPolicy,
                   extension_message_response: {
                     params: {
                       flow_token: flow_token,
@@ -880,28 +843,52 @@ const getNextScreen = async (decryptedBody) => {
                 }
               };
             } catch (error) {
-              console.error('❌ Error creating booking:', error);
+              console.error('❌ Error processing booking:', error);
+              
+              // Return to SUMMARY screen with error
               return {
                 screen: "SUMMARY",
                 data: {
                   ...SCREEN_RESPONSES.SUMMARY.data,
                   ...mergedData,
+                  sport: mergedData.sport || "",
+                  date: mergedData.date || "",
+                  duration: mergedData.duration || "",
+                  time_slot: mergedData.time_slot || "",
+                  total_amount: mergedData.total_amount || "0",
+                  original_amount: mergedData.original_amount || "0",
+                  discount_info: mergedData.discount_info || "",
+                  name: mergedData.name || "",
+                  phone: mergedData.phone || "",
+                  email: mergedData.email || "",
                   error_message: "Failed to create booking. Please try again."
                 }
               };
             }
           }
           
-          // If not transitioning to SUCCESS, return updated SUMMARY screen
+          // Save the updated state
           console.log('💾 Saving updated flow state...');
           await flowDbUtils.saveFlowState(flow_token, "SUMMARY", mergedData);
-          console.log('✅ Flow state updated');
           
+          // Return updated SUMMARY screen
           return {
             screen: "SUMMARY",
             data: {
               ...SCREEN_RESPONSES.SUMMARY.data,
-              ...mergedData
+              sport: mergedData.sport || "",
+              date: mergedData.date || "",
+              duration: mergedData.duration || "",
+              time_slot: mergedData.time_slot || "",
+              total_amount: mergedData.total_amount || "0",
+              original_amount: mergedData.original_amount || "0",
+              discount_info: mergedData.discount_info || "",
+              name: mergedData.name || "",
+              phone: mergedData.phone || "",
+              email: mergedData.email || "",
+              bookingdetails: mergedData.bookingdetails || "",
+              customerdetails: mergedData.customerdetails || "",
+              paymentdetails: mergedData.paymentdetails || ""
             }
           };
         } catch (error) {
@@ -921,6 +908,70 @@ const getNextScreen = async (decryptedBody) => {
                 },
               },
             },
+          };
+        }
+
+      case "SUCCESS":
+        try {
+          // Get current state
+          console.log('📋 Fetching current flow state for SUCCESS screen...');
+          const currentState = await flowDbUtils.getFlowState(flow_token) || {};
+          console.log('📋 Current flow state:', JSON.stringify(currentState, null, 2));
+          
+          // Merge new data with existing data
+          const mergedData = { ...currentState, ...data };
+          console.log('🔄 Merged data:', JSON.stringify(mergedData, null, 2));
+          
+          // Check if payment processing is requested
+          if (data.process_payment && data.payment_method) {
+            console.log('💳 Processing payment with method:', data.payment_method);
+            
+            // Determine which payment URL to use based on selected method
+            let paymentUrl = '';
+            if (data.payment_method === 'upi') {
+              paymentUrl = mergedData.upi_link;
+              console.log('🔗 Redirecting to UPI payment:', paymentUrl);
+            } else if (data.payment_method === 'online') {
+              paymentUrl = mergedData.invoice_url;
+              console.log('🔗 Redirecting to online payment:', paymentUrl);
+            }
+            
+            // Return navigation response to redirect to payment URL
+            if (paymentUrl) {
+              console.log('🔄 Redirecting to payment URL:', paymentUrl);
+              return {
+                screen: "SUCCESS",
+                action_response: {
+                  name: "navigate",
+                  next: {
+                    type: "url",
+                    url: paymentUrl
+                  }
+                }
+              };
+            }
+          }
+          
+          // If not processing payment, just update the state
+          console.log('💾 Saving updated flow state...');
+          await flowDbUtils.saveFlowState(flow_token, "SUCCESS", mergedData);
+          console.log('✅ Flow state updated');
+          
+          return {
+            screen: "SUCCESS",
+            data: {
+              ...SCREEN_RESPONSES.SUCCESS.data,
+              ...mergedData
+            }
+          };
+        } catch (error) {
+          console.error('❌ Error processing SUCCESS screen:', error);
+          return {
+            screen: "SUCCESS",
+            data: {
+              ...SCREEN_RESPONSES.SUCCESS.data,
+              error_message: "An error occurred. Please try again."
+            }
           };
         }
 

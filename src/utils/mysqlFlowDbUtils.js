@@ -38,7 +38,28 @@ async function saveFlowState(flowState) {
  */
 async function getFlowState(flowToken) {
   try {
-    return await FlowsState.findOne({ flowToken });
+    const state = await FlowsState.findOne({ flowToken });
+    
+    if (!state) return null;
+    
+    // Convert camelCase database fields to snake_case for application use
+    const appState = {
+      ...state,
+      // Map specific fields we know about
+      time_slot: state.timeSlot,
+      phone: state.phoneNumber,
+      total_amount: state.totalAmount,
+      original_amount: state.originalAmount,
+      discount_info: state.discountInfo,
+      is_date_enabled: state.isDateEnabled,
+      is_duration_enabled: state.isDurationEnabled,
+      is_time_slots_enabled: state.isTimeSlotsEnabled,
+      is_footer_enabled: state.isFooterEnabled,
+      min_date: state.minDate,
+      max_date: state.maxDate
+    };
+    
+    return appState;
   } catch (error) {
     console.error('Error getting flow state:', error);
     throw error;
@@ -125,7 +146,17 @@ async function getAvailableDates(sport) {
       });
     }
     
-    return dates;
+    // Also return min and max date for DatePicker
+    const minDate = today.toISOString().split('T')[0];
+    const maxDate = new Date(today);
+    maxDate.setDate(today.getDate() + maxBookingDays - 1);
+    const maxDateStr = maxDate.toISOString().split('T')[0];
+    
+    return {
+      dates,
+      min_date: minDate,
+      max_date: maxDateStr
+    };
   } catch (error) {
     console.error('Error getting available dates:', error);
     throw error;
@@ -251,13 +282,13 @@ async function getCustomerBookings(phoneNumber, status) {
       return [];
     }
     
-    // Get customer bookings
+    // Build filter object
     const filter = { customerId: customer.id };
-    
     if (status) {
       filter.status = status;
     }
     
+    // Get bookings
     return await Booking.find(filter);
   } catch (error) {
     console.error('Error getting customer bookings:', error);
@@ -266,7 +297,7 @@ async function getCustomerBookings(phoneNumber, status) {
 }
 
 /**
- * Create a booking
+ * Create a new booking
  * @param {Object} bookingData - Booking data
  * @returns {Promise<Object>} Created booking
  */
@@ -301,7 +332,7 @@ async function updateBooking(bookingId, updateData) {
 }
 
 /**
- * Get booking by ID
+ * Get a booking by ID
  * @param {string} bookingId - Booking ID
  * @returns {Promise<Object|null>} Booking object or null if not found
  */

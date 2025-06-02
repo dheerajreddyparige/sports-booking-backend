@@ -23,14 +23,76 @@ async function saveFlowState(flowToken, screen, data) {
     // Check if flow state exists
     const existingState = await FlowsState.findOne({ flowToken });
     
+    // Extract specific fields from data to avoid storing unnecessary or duplicate information
+    const {
+      sport, 
+      date, 
+      duration, 
+      time_slot, // snake_case in application
+      name,
+      phone,
+      email,
+      total_amount,
+      original_amount,
+      discount_info,
+      is_date_enabled,
+      is_duration_enabled,
+      is_time_slots_enabled,
+      is_footer_enabled,
+      min_date,
+      max_date,
+      // Add other important fields here
+      ...otherData
+    } = data;
+    
+    // Prepare data for database (converting snake_case to camelCase)
+    const dbData = {
+      screen,
+    };
+    
+    // Only add fields that are defined to avoid overwriting with undefined values
+    if (sport !== undefined) dbData.sport = sport;
+    if (date !== undefined) dbData.date = date;
+    if (duration !== undefined) dbData.duration = duration;
+    // Ensure time_slot is never null but an empty string instead
+    if (time_slot !== undefined) dbData.timeSlot = time_slot === null ? "" : time_slot;
+    
+    // Add user details if available
+    if (name !== undefined) dbData.name = name;
+    if (phone !== undefined) dbData.phoneNumber = phone;
+    if (email !== undefined) dbData.email = email;
+    
+    // Add pricing information if available - ensure they are strings
+    if (total_amount !== undefined) dbData.totalAmount = total_amount === null ? "0" : total_amount.toString();
+    if (original_amount !== undefined) dbData.originalAmount = original_amount === null ? "0" : original_amount.toString();
+    if (discount_info !== undefined) dbData.discountInfo = discount_info;
+    
+    // Add UI state flags
+    if (is_date_enabled !== undefined) dbData.isDateEnabled = is_date_enabled;
+    if (is_duration_enabled !== undefined) dbData.isDurationEnabled = is_duration_enabled;
+    if (is_time_slots_enabled !== undefined) dbData.isTimeSlotsEnabled = is_time_slots_enabled;
+    if (is_footer_enabled !== undefined) dbData.isFooterEnabled = is_footer_enabled;
+    
+    // Add date range values
+    if (min_date !== undefined) dbData.minDate = min_date;
+    if (max_date !== undefined) dbData.maxDate = max_date;
+    
+    // Add any other data that doesn't conflict with our explicit mappings
+    for (const [key, value] of Object.entries(otherData)) {
+      // Skip properties that are already mapped or are undefined
+      if (value === undefined) continue;
+      
+      // Convert snake_case to camelCase for database
+      const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+      dbData[camelKey] = value;
+    }
+    
+    console.log('📊 Prepared database data:', dbData);
+    
     if (existingState) {
       // Update existing flow state
       console.log('📝 Updating existing flow state');
-      await FlowsState.update(existingState.id, {
-        screen,
-        ...data,
-        updatedAt: new Date()
-      });
+      await FlowsState.update(existingState.id, dbData);
       
       // Return the updated flow state
       return await FlowsState.findOne({ flowToken });
@@ -38,79 +100,35 @@ async function saveFlowState(flowToken, screen, data) {
       // Create new flow state
       console.log('📝 Creating new flow state');
       
-      // First, ensure the language column exists
-      await ensureLanguageColumnExists();
+      // Make sure phoneNumber is set if phone is provided
+      if (phone && !dbData.phoneNumber) {
+        dbData.phoneNumber = phone;
+      }
+      
+      // Make sure duration is properly set
+      if (duration && !dbData.duration) {
+        dbData.duration = duration;
+      }
+      
+      // Ensure timeSlot is never null
+      if (dbData.timeSlot === null || dbData.timeSlot === undefined) {
+        dbData.timeSlot = "";
+      }
+      
+      // Ensure originalAmount is never null
+      if (dbData.originalAmount === null || dbData.originalAmount === undefined) {
+        dbData.originalAmount = "0";
+      }
       
       return await FlowsState.create({
         flowToken,
-        screen,
-        ...data,
+        ...dbData,
         processedMessages: [],
         updatedAt: new Date()
       });
     }
   } catch (error) {
     console.error('❌ Error saving flow state:', error);
-    
-    // If error is about missing language column, add it and retry
-    if (error.code === 'ER_BAD_FIELD_ERROR' && error.message.includes("Unknown column 'language'")) {
-      console.log('⚠️ Language column missing, attempting to add it...');
-      try {
-        await ensureLanguageColumnExists();
-        
-        // Try again after adding the column
-        console.log('🔄 Retrying save flow state...');
-        if (existingState) {
-          await FlowsState.update(existingState.id, {
-            screen,
-            ...data,
-            updatedAt: new Date()
-          });
-          return await FlowsState.findOne({ flowToken });
-        } else {
-          return await FlowsState.create({
-            flowToken,
-            screen,
-            ...data,
-            processedMessages: [],
-            updatedAt: new Date()
-          });
-        }
-      } catch (migrationError) {
-        console.error('❌ Failed to add language column:', migrationError);
-        throw migrationError;
-      }
-    }
-    
-    throw error;
-  }
-}
-
-/**
- * Ensure the language column exists in the flows_state table
- */
-async function ensureLanguageColumnExists() {
-  const pool = await connectToDatabase();
-  
-  try {
-    // Check if language column exists
-    const [columns] = await pool.query(`
-      SHOW COLUMNS FROM flows_state LIKE 'language'
-    `);
-    
-    if (columns.length === 0) {
-      console.log('🔄 Adding language column to flows_state table...');
-      
-      // Add language column
-      await pool.query(`
-        ALTER TABLE flows_state 
-        ADD COLUMN language VARCHAR(10) DEFAULT 'en' AFTER booking_id
-      `);
-      
-      console.log('✅ Successfully added language column to flows_state table');
-    }
-  } catch (error) {
-    console.error('❌ Failed to check/add language column:', error);
     throw error;
   }
 }
@@ -126,7 +144,66 @@ async function getFlowState(flowToken) {
   try {
     const state = await FlowsState.findOne({ flowToken });
     console.log('📋 Flow state retrieved:', state ? 'Found' : 'Not found');
-    return state;
+    
+    if (!state) return null;
+    
+    // Convert camelCase database fields to snake_case for application use
+    const appState = {
+      ...state,
+      // Map specific fields we know about
+      time_slot: state.timeSlot,
+      phone: state.phoneNumber,
+      total_amount: state.totalAmount,
+      original_amount: state.originalAmount,
+      discount_info: state.discountInfo,
+      is_date_enabled: state.isDateEnabled,
+      is_duration_enabled: state.isDurationEnabled,
+      is_time_slots_enabled: state.isTimeSlotsEnabled,
+      is_footer_enabled: state.isFooterEnabled,
+      min_date: state.minDate,
+      max_date: state.maxDate
+    };
+    
+    // Ensure duration is properly converted
+    if (state.duration !== undefined && state.duration !== null) {
+      appState.duration = state.duration;
+    }
+    
+    // Ensure phone is properly set
+    if (state.phoneNumber !== undefined && state.phoneNumber !== null) {
+      appState.phone = state.phoneNumber;
+    }
+    
+    // Convert any other camelCase properties to snake_case
+    for (const [key, value] of Object.entries(state)) {
+      // Skip properties we've already explicitly mapped or that are null/undefined
+      if (
+        key === 'timeSlot' || 
+        key === 'phoneNumber' || 
+        key === 'totalAmount' || 
+        key === 'originalAmount' || 
+        key === 'discountInfo' ||
+        key === 'isDateEnabled' ||
+        key === 'isDurationEnabled' ||
+        key === 'isTimeSlotsEnabled' ||
+        key === 'isFooterEnabled' ||
+        key === 'minDate' ||
+        key === 'maxDate' ||
+        key === 'duration' ||
+        value === null ||
+        value === undefined
+      ) continue;
+      
+      // Check if this is a camelCase property that needs conversion
+      if (/[a-z][A-Z]/.test(key)) {
+        // Convert camelCase to snake_case
+        const snakeKey = key.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+        appState[snakeKey] = value;
+      }
+    }
+    
+    console.log('📊 Converted state for application:', appState);
+    return appState;
   } catch (error) {
     console.error('❌ Error retrieving flow state:', error);
     throw error;
@@ -693,14 +770,18 @@ const calculatePriceHelper = (sport, duration) => {
     'badminton': 400,
     'cricket': 1200,
     'pickleball': 350,
+    'tennis': 600,
+    'football': 1500,
     // Add more sports as needed
   };
 
   // Default price if sport not found
-  const basePrice = basePrices[sport] || 500;
+  const basePrice = basePrices[sport.toLowerCase()] || 500;
+  console.log(`💰 Base price for ${sport}: ₹${basePrice}/hr`);
   
   // Calculate original amount (duration * base price)
   const originalAmount = basePrice * duration;
+  console.log(`💰 Original amount for ${duration} hours: ₹${originalAmount}`);
   
   let discountPercent = 0;
   let discountInfo = '';
@@ -708,25 +789,31 @@ const calculatePriceHelper = (sport, duration) => {
   // Apply bulk booking discounts based on duration
   if (duration >= 4) {
     discountPercent = 15;
+    discountInfo = `15% bulk booking discount`;
   } else if (duration >= 3) {
     discountPercent = 10;
+    discountInfo = `10% bulk booking discount`;
   } else if (duration >= 2) {
     discountPercent = 5;
+    discountInfo = `5% bulk booking discount`;
   }
   
   // Calculate discounted amount
   const discountAmount = (originalAmount * discountPercent) / 100;
-  const finalAmount = originalAmount - discountAmount;
+  const finalAmount = Math.round(originalAmount - discountAmount);
   
   // Format discount info if applicable
   if (discountPercent > 0) {
-    discountInfo = `**Bulk Booking Discount:** ${discountPercent}% (₹${discountAmount})`;
+    console.log(`💰 Applied ${discountPercent}% discount: -₹${discountAmount}`);
+    console.log(`💰 Final amount: ₹${finalAmount}`);
+  } else {
+    console.log(`💰 No discount applied. Final amount: ₹${originalAmount}`);
   }
   
   return {
-    originalAmount: originalAmount.toFixed(2),
-    discountAmount: discountAmount.toFixed(2),
-    finalAmount: finalAmount.toFixed(2),
+    originalAmount: Math.round(originalAmount).toString(),
+    discountAmount: Math.round(discountAmount).toString(),
+    finalAmount: (discountPercent > 0 ? finalAmount : Math.round(originalAmount)).toString(),
     discountPercent,
     discountInfo
   };
@@ -746,8 +833,8 @@ async function createOrUpdateCustomer(customerData) {
     
     // Check if customer exists by phone number
     const [existingCustomers] = await pool.query(
-      'SELECT * FROM customers WHERE phone_number = ? LIMIT 1',
-      [customerData.phoneNumber]
+      'SELECT * FROM customers WHERE phone = ? LIMIT 1',
+      [customerData.phone]
     );
     
     if (existingCustomers && existingCustomers.length > 0) {
@@ -774,16 +861,6 @@ async function createOrUpdateCustomer(customerData) {
         params.push(customerData.whatsappId);
       }
       
-      if (customerData.isActive !== undefined) {
-        updates.push('is_active = ?');
-        params.push(customerData.isActive ? 1 : 0);
-      }
-      
-      if (customerData.isVerified !== undefined) {
-        updates.push('is_verified = ?');
-        params.push(customerData.isVerified ? 1 : 0);
-      }
-      
       // Only update if there are fields to update
       if (updates.length > 0) {
         params.push(customer.id);
@@ -805,44 +882,79 @@ async function createOrUpdateCustomer(customerData) {
       // Create new customer
       console.log('🆕 Creating new customer');
       
-      // Split name into first and last name
-      let firstName = customerData.name;
-      let lastName = '';
-      
-      if (customerData.name && customerData.name.includes(' ')) {
-        const nameParts = customerData.name.split(' ');
-        firstName = nameParts[0];
-        lastName = nameParts.slice(1).join(' ');
+      // Check if the customers table has the required columns
+      try {
+        const [columns] = await pool.query('DESCRIBE customers');
+        const columnNames = columns.map(col => col.Field);
+        
+        console.log('Available columns in customers table:', columnNames.join(', '));
+        
+        // Create a dynamic query based on available columns
+        const availableColumns = [];
+        const placeholders = [];
+        const values = [];
+        
+        // Map customer data to available columns
+        if (columnNames.includes('name')) {
+          availableColumns.push('name');
+          placeholders.push('?');
+          values.push(customerData.name || '');
+        }
+        
+        if (columnNames.includes('phone')) {
+          availableColumns.push('phone');
+          placeholders.push('?');
+          values.push(customerData.phone || '');
+        }
+        
+        if (columnNames.includes('email')) {
+          availableColumns.push('email');
+          placeholders.push('?');
+          values.push(customerData.email || '');
+        }
+        
+        if (columnNames.includes('whatsapp_id')) {
+          availableColumns.push('whatsapp_id');
+          placeholders.push('?');
+          // Use empty string instead of null for whatsapp_id
+          values.push(customerData.whatsappId || '');
+        }
+        
+        if (columnNames.includes('customer_id') && customerData.phone) {
+          availableColumns.push('customer_id');
+          placeholders.push('?');
+          values.push(`cust_${Date.now()}_${customerData.phone.substring(0, 4)}`);
+        }
+        
+        // Only proceed if we have columns to insert
+        if (availableColumns.length > 0) {
+          const [result] = await pool.query(
+            `INSERT INTO customers (${availableColumns.join(', ')}) VALUES (${placeholders.join(', ')})`,
+            values
+          );
+          
+          console.log('✅ New customer created with ID:', result.insertId);
+          
+          // Return the created customer
+          const [newCustomers] = await pool.query(
+            'SELECT * FROM customers WHERE id = ?',
+            [result.insertId]
+          );
+          
+          return newCustomers[0];
+        } else {
+          console.log('⚠️ No matching columns found in customers table, skipping customer creation');
+          return null;
+        }
+      } catch (error) {
+        console.error('❌ Error checking customers table structure:', error);
+        throw error;
       }
-      
-      const [result] = await pool.query(
-        `INSERT INTO customers (
-          first_name, last_name, phone_number, email, whatsapp_id, is_active, is_verified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          firstName,
-          lastName,
-          customerData.phoneNumber,
-          customerData.email || null,
-          customerData.whatsappId || null,
-          customerData.isActive ? 1 : 0,
-          customerData.isVerified ? 1 : 0
-        ]
-      );
-      
-      console.log('✅ New customer created with ID:', result.insertId);
-      
-      // Return the created customer
-      const [newCustomers] = await pool.query(
-        'SELECT * FROM customers WHERE id = ?',
-        [result.insertId]
-      );
-      
-      return newCustomers[0];
     }
   } catch (error) {
     console.error('❌ Error creating/updating customer:', error);
-    throw error;
+    // Return null instead of throwing to prevent flow interruption
+    return null;
   }
 }
 
@@ -860,7 +972,7 @@ async function getCustomerByPhone(phoneNumber) {
     
     // Query to find customer by phone number
     const [customers] = await pool.query(
-      'SELECT * FROM customers WHERE phone_number = ? LIMIT 1',
+      'SELECT * FROM customers WHERE phone = ? LIMIT 1',
       [phoneNumber]
     );
     
@@ -872,7 +984,7 @@ async function getCustomerByPhone(phoneNumber) {
       return {
         id: customer.id,
         name: customer.first_name + (customer.last_name ? ' ' + customer.last_name : ''),
-        phoneNumber: customer.phone_number,
+        phone: customer.phone,
         email: customer.email,
         whatsappId: customer.whatsapp_id,
         isActive: !!customer.is_active,
@@ -1139,6 +1251,304 @@ const validateCouponHelper = (couponCode, amount) => {
   };
 };
 
+/**
+ * Create a new booking in the database
+ * @param {Object} bookingData - Booking data
+ * @returns {Promise<string>} Booking ID
+ */
+async function createBooking(bookingData) {
+  console.log('📝 Creating new booking with data:', bookingData);
+  await connectToDatabase();
+  
+  try {
+    const pool = await connectToDatabase();
+    
+    // Generate a unique booking ID
+    const bookingId = `BK${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    
+    // Parse date from string to Date object if needed
+    let bookingDate = bookingData.date;
+    if (typeof bookingDate === 'string') {
+      bookingDate = new Date(bookingDate);
+    }
+    
+    // Extract time slot start time
+    const startTime = bookingData.time_slot.split('-')[0].trim();
+    
+    // Calculate end time based on duration
+    const [startHour, startMinute] = startTime.replace(/\s*(?:AM|PM)/, '').split(':').map(Number);
+    const duration = parseFloat(bookingData.duration);
+    
+    // Calculate end time in hours and minutes
+    let endHour = startHour + Math.floor(duration);
+    let endMinute = startMinute + ((duration % 1) * 60);
+    
+    // Adjust for minute overflow
+    if (endMinute >= 60) {
+      endHour += 1;
+      endMinute -= 60;
+    }
+    
+    // Format end time
+    const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+    
+    // Prepare data for insertion
+    const insertData = {
+      sport: bookingData.sport,
+      court_id: 0, // Default court ID
+      date: bookingDate,
+      start_time: startTime,
+      end_time: endTime,
+      duration: duration,
+      customer_name: bookingData.customer_name,
+      customer_email: bookingData.customer_email,
+      customer_phone: bookingData.customer_phone,
+      status: bookingData.status || 'pending',
+      amount: bookingData.amount,
+      currency: 'INR',
+      payment_status: 'pending',
+      flow_token: bookingData.flow_token || null,
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    
+    // Create the SQL query with specific fields
+    const fields = Object.keys(insertData);
+    const placeholders = fields.map(() => '?').join(', ');
+    const values = fields.map(field => insertData[field]);
+    
+    const query = `
+      INSERT INTO bookings (${fields.join(', ')})
+      VALUES (${placeholders})
+    `;
+    
+    // Execute the query
+    const [result] = await pool.query(query, values);
+    
+    // Store the booking ID in notes field for reference
+    await pool.query(
+      'UPDATE bookings SET notes = ? WHERE id = ?',
+      [bookingId, result.insertId]
+    );
+    
+    console.log(`✅ Booking created successfully with ID: ${bookingId}`);
+    return bookingId;
+  } catch (error) {
+    console.error('❌ Error creating booking:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update an existing booking with payment information
+ * @param {string} bookingId - Booking ID
+ * @param {Object} updateData - Data to update
+ * @returns {Promise<Object>} Updated booking
+ */
+async function updateBooking(bookingId, updateData) {
+  console.log(`🔄 Updating booking ${bookingId} with payment information...`);
+  await connectToDatabase();
+  
+  try {
+    const pool = await connectToDatabase();
+    
+    // Check if booking exists using notes field which contains the booking ID
+    const [bookings] = await pool.query(
+      'SELECT * FROM bookings WHERE notes = ? LIMIT 1',
+      [bookingId]
+    );
+    
+    if (!bookings || bookings.length === 0) {
+      throw new Error(`Booking not found with ID: ${bookingId}`);
+    }
+    
+    // Prepare update fields and values
+    const updateFields = [];
+    const updateValues = [];
+    
+    // Map fields to database columns
+    if (updateData.upi_link) {
+      updateFields.push('payment_receipt = ?');
+      updateValues.push(updateData.upi_link);
+    }
+    
+    if (updateData.invoice_url) {
+      updateFields.push('payment_receipt = ?');
+      updateValues.push(updateData.invoice_url);
+    }
+    
+    if (updateData.razorpay_order_id) {
+      updateFields.push('transaction_id = ?');
+      updateValues.push(updateData.razorpay_order_id);
+    }
+    
+    if (updateData.payment_method) {
+      updateFields.push('payment_method = ?');
+      // Map payment method to enum values
+      const paymentMethodMap = {
+        'upi': 'razorpay',
+        'razorpay': 'razorpay',
+        'paytm': 'paytm',
+        'cash': 'cash'
+      };
+      updateValues.push(paymentMethodMap[updateData.payment_method] || 'razorpay');
+    }
+    
+    if (updateData.payment_status) {
+      updateFields.push('payment_status = ?');
+      updateValues.push(updateData.payment_status);
+    }
+    
+    if (updateData.status) {
+      updateFields.push('status = ?');
+      updateValues.push(updateData.status);
+    }
+    
+    // Add payment initiated timestamp
+    updateFields.push('payment_initiated_at = NOW()');
+    
+    // Add updated_at timestamp
+    updateFields.push('updated_at = NOW()');
+    
+    // Only proceed if there are fields to update
+    if (updateFields.length > 0) {
+      // Add booking ID to values
+      updateValues.push(bookingId);
+      
+      // Execute update query
+      const query = `
+        UPDATE bookings
+        SET ${updateFields.join(', ')}
+        WHERE notes = ?
+      `;
+      
+      await pool.query(query, updateValues);
+      console.log(`✅ Booking ${bookingId} updated successfully`);
+      
+      // Return updated booking
+      const [updatedBookings] = await pool.query(
+        'SELECT * FROM bookings WHERE notes = ? LIMIT 1',
+        [bookingId]
+      );
+      
+      return updatedBookings[0];
+    } else {
+      console.log(`ℹ️ No fields to update for booking ${bookingId}`);
+      return bookings[0];
+    }
+  } catch (error) {
+    console.error(`❌ Error updating booking ${bookingId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Generate UPI payment link according to WhatsApp Cloud API requirements
+ * @param {Object} bookingData - Booking data
+ * @returns {string} UPI payment link
+ */
+function generateUpiPaymentLink(bookingData) {
+  // Get UPI configuration from environment variables or use defaults
+  const upiId = process.env.UPI_ID || "dheeraj@upi";
+  const merchantName = encodeURIComponent(process.env.MERCHANT_NAME || "PitZone Sports");
+  const referenceId = bookingData.bookingId || `order_${Date.now()}`;
+  
+  // Format amount to have exactly 2 decimal places
+  const amount = parseFloat(bookingData.amount).toFixed(2);
+  
+  // Create a descriptive transaction note
+  const description = encodeURIComponent(`Booking for ${bookingData.sport} on ${bookingData.date} at ${bookingData.time_slot}`);
+  
+  // Required parameters for UPI intent
+  const merchantCategoryCode = process.env.MERCHANT_CATEGORY_CODE || "0000"; // Merchant Category Code
+  const purposeCode = process.env.PURPOSE_CODE || "00"; // Purpose Code for merchant payments
+  const currency = "INR";
+  
+  // Optional parameters for better compatibility
+  const mode = "00"; // UPI intent mode
+  
+  // Construct UPI link according to NPCI specifications and WhatsApp Cloud API requirements
+  // Format: upi://pay?pa=UPI_ID&pn=NAME&tr=REFERENCE_ID&am=AMOUNT&cu=CURRENCY&mc=MERCHANT_CODE&purpose=PURPOSE_CODE&tn=DESCRIPTION
+  const upiLink = `upi://pay?pa=${upiId}&pn=${merchantName}&tr=${referenceId}&am=${amount}&cu=${currency}&mc=${merchantCategoryCode}&purpose=${purposeCode}&mode=${mode}&tn=${description}`;
+  
+  console.log('🔗 Generated UPI payment link:', upiLink);
+  return upiLink;
+}
+
+/**
+ * Generate Razorpay payment link
+ * @param {Object} bookingData - Booking data
+ * @returns {Promise<string>} Razorpay payment link
+ */
+async function generateRazorpayLink(bookingData) {
+  try {
+    // Check if Razorpay credentials are available
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    
+    if (!keyId || !keySecret) {
+      console.log('⚠️ Razorpay credentials not found, generating mock link');
+      return `https://rzp.io/i/mock/${bookingData.bookingId || Date.now()}`;
+    }
+    
+    // Initialize Razorpay
+    const Razorpay = require('razorpay');
+    const razorpay = new Razorpay({
+      key_id: keyId,
+      key_secret: keySecret
+    });
+    
+    // Create Razorpay order
+    const amount = Math.round(parseFloat(bookingData.amount) * 100); // Convert to paise
+    const order = await razorpay.orders.create({
+      amount: amount,
+      currency: "INR",
+      receipt: `receipt_${bookingData.bookingId || Date.now()}`,
+      notes: {
+        booking_id: bookingData.bookingId,
+        sport: bookingData.sport,
+        date: bookingData.date,
+        time_slot: bookingData.time_slot,
+        customer_name: bookingData.customer_name,
+        customer_email: bookingData.customer_email,
+        customer_phone: bookingData.customer_phone
+      }
+    });
+    
+    // Create a payment link
+    const paymentLink = await razorpay.paymentLink.create({
+      amount: amount,
+      currency: "INR",
+      accept_partial: false,
+      description: `Booking for ${bookingData.sport} on ${bookingData.date}`,
+      customer: {
+        name: bookingData.customer_name,
+        email: bookingData.customer_email,
+        contact: bookingData.customer_phone
+      },
+      notify: {
+        sms: true,
+        email: true
+      },
+      reminder_enable: true,
+      notes: {
+        booking_id: bookingData.bookingId,
+        sport: bookingData.sport,
+        date: bookingData.date,
+        time_slot: bookingData.time_slot
+      },
+      callback_url: `${process.env.BASE_URL || 'https://pitzone-sports.com'}/api/payment/callback?booking_id=${bookingData.bookingId}`,
+      callback_method: 'get'
+    });
+    
+    console.log('✅ Razorpay payment link created:', paymentLink.short_url);
+    return paymentLink.short_url;
+  } catch (error) {
+    console.error('❌ Error creating Razorpay payment link:', error);
+    return `https://rzp.io/i/error/${bookingData.bookingId || Date.now()}`;
+  }
+}
+
 module.exports = {
   saveFlowState,
   getFlowState,
@@ -1149,7 +1559,6 @@ module.exports = {
   calculatePriceHelper,
   createBookingFromFlow,
   get_time_slots,
-  ensureLanguageColumnExists,
   createOrUpdateCustomer,
   getCustomerByPhone,
   validateCoupon,
@@ -1158,5 +1567,9 @@ module.exports = {
   formatPriceDifference,
   generateTimeSlotsHelper,
   formatTime,
-  validateCouponHelper
+  validateCouponHelper,
+  updateBooking,
+  createBooking,
+  generateUpiPaymentLink,
+  generateRazorpayLink
 };

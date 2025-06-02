@@ -1,0 +1,25 @@
+-- Bookings table
+CREATE TABLE IF NOT EXISTS bookings (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  booking_id VARCHAR(50) NOT NULL UNIQUE,
+  sport VARCHAR(50) NOT NULL,
+  booking_date DATE NOT NULL,
+  time_slot VARCHAR(50) NOT NULL,
+  duration VARCHAR(10) NOT NULL,
+  amount DECIMAL(10, 2) NOT NULL,
+  customer_name VARCHAR(100) NOT NULL,
+  customer_email VARCHAR(100) NOT NULL,
+  customer_phone VARCHAR(20) NOT NULL,
+  payment_method VARCHAR(20) NOT NULL,
+  payment_status ENUM('pending', 'completed', 'failed', 'refunded') DEFAULT 'pending',
+  status ENUM('pending', 'confirmed', 'cancelled', 'completed') DEFAULT 'pending',
+  upi_link TEXT,
+  razorpay_order_id VARCHAR(100),
+  payment_id VARCHAR(100),
+  flow_token VARCHAR(100),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX (customer_phone),
+  INDEX (booking_id),
+  INDEX (razorpay_order_id)
+); 

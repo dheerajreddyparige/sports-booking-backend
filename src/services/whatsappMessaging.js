@@ -133,7 +133,7 @@ async function processIncomingMessage(message) {
     
     // Connect to database
     const connectToDatabase = require('../utils/mysql-connection.js');
-    await connectToDatabase();
+    const pool = await connectToDatabase();
     
     // Check if this message has already been processed
     const FlowsState = require('../models/mysql/FlowsState');
@@ -161,9 +161,13 @@ async function processIncomingMessage(message) {
     } else {
       // Add this message ID to processed messages
       const updatedProcessedMessages = [...(flowState.processedMessages || []), messageId];
-      await FlowsState.update(flowState.id, {
-        processedMessages: updatedProcessedMessages
-      });
+      
+      // Update processed messages directly
+      await pool.query(
+        'UPDATE flows_state SET processed_messages = ? WHERE id = ?',
+        [JSON.stringify(updatedProcessedMessages), flowState.id]
+      );
+      
       flowState.processedMessages = updatedProcessedMessages;
     }
     
@@ -180,8 +184,13 @@ async function processIncomingMessage(message) {
         // Send welcome message with language selection
         await sendLanguageSelectionMessage(from);
         
-        // Update flow state
-        await FlowsState.update(flowState.id, { screen: 'language_selection' });
+        // Update flow state directly
+        if (flowState) {
+          await pool.query(
+            'UPDATE flows_state SET screen = ? WHERE id = ?',
+            ['language_selection', flowState.id]
+          );
+        }
         
         return { success: true, action: 'language_selection_sent' };
       }
@@ -193,26 +202,36 @@ async function processIncomingMessage(message) {
         const buttonId = interactive.button_reply.id;
         
         if (buttonId === 'language_english') {
-          // User selected English language
-          await FlowsState.update(flowState.id, { language: 'english' });
+          console.log('🌐 User selected English language');
+          
+          // Update flow state directly
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET language = ?, screen = ? WHERE id = ?',
+              ['english', 'main_menu', flowState.id]
+            );
+          }
           
           // Send main menu
+          console.log('📤 Sending main menu in English...');
           await sendMainMenuMessage(from);
-          
-          // Update flow state
-          await FlowsState.update(flowState.id, { screen: 'main_menu' });
           
           return { success: true, action: 'english_selected_main_menu_sent' };
         } else if (buttonId === 'language_telugu') {
-          // User selected Telugu language
-          await FlowsState.update(flowState.id, { language: 'telugu' });
+          console.log('🌐 User selected Telugu language');
+          
+          // Update flow state directly
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET language = ?, screen = ? WHERE id = ?',
+              ['telugu', 'main_menu', flowState.id]
+            );
+          }
           
           // For now, just use English flow with Telugu messages
           // In future, implement full Telugu support
+          console.log('📤 Sending main menu in Telugu...');
           await sendMainMenuMessage(from, 'telugu');
-          
-          // Update flow state
-          await FlowsState.update(flowState.id, { screen: 'main_menu' });
           
           return { success: true, action: 'telugu_selected_main_menu_sent' };
         }
@@ -225,8 +244,13 @@ async function processIncomingMessage(message) {
         if (listItemId === 'new_booking') {
           console.log('🔄 User selected new booking, starting booking flow...');
           
-          // Update flow state
-          await FlowsState.update(flowState.id, { screen: 'booking' });
+          // Update flow state directly
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET screen = ? WHERE id = ?',
+              ['booking', flowState.id]
+            );
+          }
           
           // Send the WhatsApp Flow for booking
           await sendBookingFlow(from);
@@ -924,7 +948,7 @@ async function sendBookingFlow(phoneNumber) {
     console.log('🔄 Sending booking flow...');
     
     // Generate a unique flow token
-    const flowToken = `booking_${phoneNumber}_${Date.now()}`;
+    const flowToken = `booking_${Date.now()}`;
     
     // Save the flow token and phone number in the database for later use
     const FlowsState = require('../models/mysql/FlowsState');
@@ -934,6 +958,9 @@ async function sendBookingFlow(phoneNumber) {
       flowState.screen = 'booking_flow';
       await flowState.save();
     }
+    
+    // Get flow ID from environment variable or use default
+    const flowId = process.env.WHATSAPP_FLOW_ID || '709410911435764';
     
     const flowMessage = {
       messaging_product: 'whatsapp',
@@ -957,7 +984,7 @@ async function sendBookingFlow(phoneNumber) {
           parameters: {
             flow_message_version: '3',
             flow_token: flowToken,
-            flow_id: process.env.WHATSAPP_FLOW_ID || 'YOUR_FLOW_ID',
+            flow_id: flowId,
             flow_cta: 'Book Now',
             flow_action: 'INIT',
             flow_action_payload: {
@@ -981,6 +1008,81 @@ async function sendBookingFlow(phoneNumber) {
   }
 }
 
+/**
+ * Handles flow completion webhook data
+ * @param {Object} flowData - Flow completion data
+ * @returns {Promise<Object>} - Processing result
+ */
+async function handleFlowCompletion(flowData) {
+  try {
+    const { to, payload, flow_token } = flowData;
+    console.log('📥 Received flow completion data:', { to, flow_token, payload });
+    
+    // Create booking data object
+    const bookingData = {
+      sport: payload.sport,
+      date: payload.date,
+      time_slot: payload.time_slot,
+      duration: payload.duration,
+      total_amount: payload.total_amount,
+      name: payload.name,
+      email: payload.email,
+      phone: to,
+      booking_id: 'BK' + Date.now(),
+      status: 'pending',
+      payment_status: 'pending',
+      flow_token: flow_token
+    };
+    
+    // Import modules here to avoid circular dependencies
+    const bookingService = require('./bookingService');
+    const { createPaymentOptionsMessage } = require('../utils/whatsappPaymentFlow');
+    
+    // Save temporary booking in database
+    console.log('💾 Creating temporary booking in database...');
+    const booking = await bookingService.createTemporaryBooking(bookingData);
+    
+    // Send payment options message
+    console.log('📤 Sending payment options message...');
+    const paymentOptionsMessage = createPaymentOptionsMessage(to, bookingData);
+    await whatsappService.sendRawMessage(paymentOptionsMessage);
+    
+    return { success: true, action: 'flow_completion_processed', booking_id: booking.booking_id };
+  } catch (error) {
+    console.error('❌ Error handling flow completion:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Sends a simple text message
+ * @param {string} phoneNumber - Recipient's phone number
+ * @param {string} text - Message text
+ * @returns {Promise<Object>} - API response
+ */
+async function sendTextMessage(phoneNumber, text) {
+  try {
+    console.log('📤 Sending text message...');
+    
+    const message = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phoneNumber,
+      type: 'text',
+      text: {
+        body: text
+      }
+    };
+    
+    const response = await whatsappService.sendRawMessage(message);
+    console.log('✅ Text message sent successfully');
+    return response;
+  } catch (error) {
+    console.error('❌ Error sending text message:', error);
+    throw error;
+  }
+}
+
 // Make sure to export the function at the end of the file
 module.exports = {
   sendWelcomeMessage,
@@ -994,5 +1096,7 @@ module.exports = {
   getBookingDetails,
   sendLanguageSelectionMessage,
   sendMainMenuMessage,
-  sendBookingFlow
+  sendBookingFlow,
+  handleFlowCompletion,
+  sendTextMessage
 };

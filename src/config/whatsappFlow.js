@@ -13,10 +13,7 @@ const WHATSAPP_FLOW ={
     "DETAILS": [
       "SUMMARY"
     ],
-    "SUMMARY": [
-      "SUCCESS"
-    ],
-    "SUCCESS": []
+    "SUMMARY": []
   },
   "screens": [
     {
@@ -134,6 +131,14 @@ const WHATSAPP_FLOW ={
         "is_footer_enabled": {
           "type": "boolean",
           "__example__": false
+        },
+        "min_date": {
+          "type": "string",
+          "__example__": "2023-01-01"
+        },
+        "max_date": {
+          "type": "string",
+          "__example__": "2023-12-31"
         }
       },
       "layout": {
@@ -164,6 +169,8 @@ const WHATSAPP_FLOW ={
             "required": "${data.is_date_enabled}",
             "enabled": "${data.is_date_enabled}",
             "visible": "${data.is_date_enabled}",
+            "min-date": "${data.min_date}",
+            "max-date": "${data.max_date}",
             "on-select-action": {
               "name": "data_exchange",
               "payload": {
@@ -294,6 +301,10 @@ const WHATSAPP_FLOW ={
         "is_footer_enabled": {
           "type": "boolean",
           "__example__": true
+        },
+        "original_amount": {
+          "type": "string",
+          "__example__": ""
         }
       },
       "layout": {
@@ -352,6 +363,7 @@ const WHATSAPP_FLOW ={
     {
       "id": "SUMMARY",
       "title": "✅ Booking Summary",
+      "terminal": true,
       "data": {
         "bookingdetails": {
           "type": "string",
@@ -361,7 +373,7 @@ const WHATSAPP_FLOW ={
           "type": "string",
           "__example__": ""
         },
-        "pricediff": {
+        "paymentdetails": {
           "type": "string",
           "__example__": ""
         },
@@ -389,33 +401,17 @@ const WHATSAPP_FLOW ={
           "type": "string",
           "__example__": "asf"
         },
-        "coupon": {
-          "type": "string",
-          "__example__": ""
-        },
-        "coupon_applied": {
-          "type": "boolean",
-          "__example__": false
-        },
-        "coupon_error": {
-          "type": "string",
-          "__example__": ""
-        },
         "original_amount": {
           "type": "string",
           "__example__": ""
         },
-        "terms": {
+        "razorpay_mid": {
           "type": "string",
-          "__example__": "No refunds after booking unless canceled "
+          "__example__": "acc_PX637rs8HXQBWa"
         },
-        "cancellation_policy": {
+        "whatsapp_business_id": {
           "type": "string",
-          "__example__": "100% refund: Cancel >2 hours before booking.\n75% "
-        },
-        "has_coupon_error": {
-          "type": "boolean",
-          "__example__": false
+          "__example__": "1750678955481520"
         }
       },
       "layout": {
@@ -434,39 +430,8 @@ const WHATSAPP_FLOW ={
             "text": "${data.customerdetails}"
           },
           {
-            "type": "TextInput",
-            "name": "coupon",
-            "label": "Have a Coupon Code?",
-            "required": false,
-            "init-value": "${data.coupon}"
-          },
-          {
-            "type": "ChipsSelector",
-            "name": "apply_coupon",
-            "label": "Coupon Options",
-            "data-source": [
-              {
-                "id": "apply",
-                "title": "Apply Coupon"
-              }
-            ],
-            "on-select-action": {
-              "name": "data_exchange",
-              "payload": {
-                "coupon": "${form.coupon}",
-                "apply_coupon": true
-              }
-            }
-          },
-          {
             "type": "TextBody",
-            "text": "${data.coupon_error}",
-            "visible": "${data.has_coupon_error}"
-          },
-          {
-            "type": "TextBody",
-            "text": "${data.pricediff}",
-            "visible": "${data.coupon_applied}"
+            "text": "${data.paymentdetails}"
           },
           {
             "type": "OptIn",
@@ -490,11 +455,11 @@ const WHATSAPP_FLOW ={
           },
           {
             "type": "TextBody",
-            "text": "⏰ Note: Booking will be held for 5 minutes once you click 'Pay Now'. If payment is not completed within this time, the booking will be released."
+            "text": "⏰ Note: After clicking 'Confirm Order', we will send you payment options. Payment must be completed within 5 minutes, or the booking will be released."
           },
           {
             "type": "Footer",
-            "label": "Pay Now",
+            "label": "Confirm Order",
             "on-click-action": {
               "name": "data_exchange",
               "payload": {
@@ -507,90 +472,12 @@ const WHATSAPP_FLOW ={
                 "name": "${data.name}",
                 "phone": "${data.phone}",
                 "email": "${data.email}",
-                "coupon": "${form.coupon}",
-                "coupon_applied": "${data.coupon_applied}",
-                "coupon_discount": "${data.coupon_discount}",
                 "agree_cancellation": "${form.agree_cancellation}",
                 "agree_terms": "${form.agree_terms}",
-                "payment_requested": true
+                "order_confirmed": true,
+                "razorpay_mid": "acc_PX637rs8HXQBWa",
+                "whatsapp_business_id": "1750678955481520"
               }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "id": "SUCCESS",
-      "title": "🎉 Booking Confirmed!",
-      "terminal": true,
-      "data": {
-        "invoice_url": {
-          "type": "string",
-          "__example__": "https://razorpay.com/payment/..."
-        },
-        "upi_link": {
-          "type": "string",
-          "__example__": "upi://pay?pa=merchantvpa@bank&pn=MerchantName&tr=REF123&am=100.00&cu=INR"
-        },
-        "extension_message_response": {
-          "type": "object",
-          "properties": {
-            "params": {
-              "type": "object",
-              "properties": {
-                "flow_token": {
-                  "type": "string"
-                },
-                "booking_id": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "__example__": {
-            "params": {
-              "flow_token": "booking_1234567890",
-              "booking_id": "BK123456"
-            }
-          }
-        },
-        "cancellation_policy": {
-          "type": "string",
-          "__example__": "100% refund: Cancel >2 hours before booking.\n75% refund: Cancel 1-2 hours before.\nNo refund: Cancel <1 hour before."
-        }
-      },
-      "layout": {
-        "type": "SingleColumnLayout",
-        "children": [
-          {
-            "type": "TextHeading",
-            "text": "Booking Successful!"
-          },
-          {
-            "type": "TextBody",
-            "text": "Your booking has been confirmed. Please complete payment to secure your slot."
-          },
-          {
-            "type": "EmbeddedLink",
-            "text": "Pay with UPI",
-            "on-click-action": {
-              "name": "open_url",
-              "url": "${data.upi_link}"
-            }
-          },
-          {
-            "type": "EmbeddedLink",
-            "text": "Pay Online",
-            "on-click-action": {
-              "name": "open_url",
-              "url": "${data.invoice_url}"
-            }
-          },
-          {
-            "type": "Footer",
-            "label": "Close",
-            "on-click-action": {
-              "name": "complete"
             }
           }
         ]

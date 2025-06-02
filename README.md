@@ -131,3 +131,145 @@ This implementation includes:
 ## License
 
 This project uses code from Meta's WhatsApp Flows Tools, which is licensed under the MIT License.
+
+# WhatsApp Flow Integration for Sports Booking
+
+## WhatsApp Flow with External Payment
+
+The sports booking application now uses a WhatsApp Flow for the booking process, followed by a separate payment step using WhatsApp's payment integration. This architecture allows for a streamlined booking experience while leveraging WhatsApp's latest payment capabilities.
+
+### Flow Structure
+
+1. **Booking Process Flow:**
+   - The flow walks users through selecting sports, dates, times, and providing personal details
+   - The flow ends with a "Confirm Order" button on the SUMMARY screen
+   - Upon completion, a webhook is triggered to handle payment processing
+
+2. **Payment Processing:**
+   - After flow completion, the backend sends a payment options message (UPI or Razorpay)
+   - Customer selects their preferred payment method
+   - A payment message is generated with the appropriate payment gateway integration
+   - After successful payment, the booking is confirmed
+
+### Flow ID and Configuration
+
+- WhatsApp Flow ID: 709410911435764
+- Payment Configuration ID: 1750678955481520
+- Razorpay Merchant ID: acc_PX637rs8HXQBWa
+
+### API Endpoints
+
+- **Send Flow Message**: `POST /api/whatsapp/flows/send-flow`
+  - Sends a WhatsApp Flow message to a user to start the booking process
+  
+- **Flow Completion Webhook**: `POST /api/whatsapp/flows/flow-completion`
+  - Handles the flow completion data and initiates the payment process
+  
+- **Payment Processing**:
+  - UPI Payment: `POST /api/whatsapp/flows/payment/upi`
+  - Razorpay Payment: `POST /api/whatsapp/flows/payment/razorpay`
+  - Payment Status: `POST /api/whatsapp/flows/payment/status`
+
+### Example Flow Message
+
+```javascript
+// Example to send a WhatsApp Flow message
+{
+  "messaging_product": "whatsapp",
+  "to": "919876543210",
+  "recipient_type": "individual",
+  "type": "interactive",
+  "interactive": {
+    "type": "flow",
+    "header": {
+      "type": "text",
+      "text": "Book Your Sports Session"
+    },
+    "body": {
+      "text": "Welcome to PitZone Sports Booking. Complete the form to book your sports session."
+    },
+    "footer": {
+      "text": "PitZone Sports"
+    },
+    "action": {
+      "name": "flow",
+      "parameters": {
+        "flow_message_version": "3",
+        "flow_action": "navigate",
+        "flow_token": "booking_123456789",
+        "flow_id": "709410911435764",
+        "flow_cta": "Book Now",
+        "flow_action_payload": {
+          "screen": "BOOKING",
+          "data": {}
+        }
+      }
+    }
+  }
+}
+```
+
+### Payment Message Example
+
+```javascript
+// Example UPI payment message
+{
+  "messaging_product": "whatsapp",
+  "recipient_type": "individual",
+  "to": "919876543210",
+  "type": "interactive",
+  "interactive": {
+    "type": "order_details",
+    "header": {
+      "type": "text",
+      "text": "UPI Payment"
+    },
+    "body": {
+      "text": "Please complete your payment of ₹500 using the UPI link below."
+    },
+    "footer": {
+      "text": "Click below to pay"
+    },
+    "action": {
+      "name": "pay",
+      "parameters": {
+        "payment_configuration_id": "1750678955481520",
+        "payment_type": "UPI",
+        "payment_gateway": "upi",
+        "customer_email": "customer@example.com",
+        "customer_name": "John Doe",
+        "booking_ref": "BK123456789",
+        "transaction_amount": {
+          "amount": "500",
+          "currency": "INR"
+        },
+        "payment_link": "upi://pay?pa=pitzone@ybl&pn=PitZone%20Sports&tr=BK123456789&am=500&cu=INR&tn=Booking%20for%20John%20Doe"
+      }
+    }
+  }
+}
+```
+
+## Setup Instructions
+
+1. Configure environment variables:
+   ```
+   WHATSAPP_API_TOKEN=your_whatsapp_api_token
+   WHATSAPP_BUSINESS_ACCOUNT_ID=646511535207965
+   UPI_MERCHANT_VPA=pitzone@ybl
+   UPI_MERCHANT_NAME=PitZone Sports
+   RAZORPAY_KEY_ID=your_razorpay_key_id
+   RAZORPAY_KEY_SECRET=your_razorpay_key_secret
+   ```
+
+2. Set up the database schema (see database_schema.sql)
+
+3. Install dependencies:
+   ```
+   npm install
+   ```
+
+4. Start the server:
+   ```
+   npm start
+   ```

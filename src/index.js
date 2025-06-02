@@ -15,6 +15,7 @@ const bookingRoutes = require('./api/bookings.js');
 const sportsRoutes = require('./api/sports.js');
 const webhookRoutes = require('./api/webhook.js');
 const razorpayWebhookRoutes = require('./api/razorpayWebhook.js');
+const apiRoutes = require('./api/routes/index.js');
 
 // Create Express app
 const app = express();
@@ -40,13 +41,13 @@ app.get('/', (req, res) => {
   res.send('Sports Booking API - MySQL Version');
 });
 
-// API routes
-app.use('/api/available-slots', require('./api/available-slots.js'));
-app.use('/api/bookings', require('./api/bookings.js'));
-app.use('/api/sports', require('./api/sports.js'));
-app.use('/api/webhook', require('./api/webhook.js'));
-app.use('/api/razorpay-webhook', require('./api/razorpayWebhook.js'));
-
+// Configure routes
+app.use('/api/available-slots', availableSlotsRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/sports', sportsRoutes);
+app.use('/api/webhook', webhookRoutes);
+app.use('/api/razorpay-webhook', razorpayWebhookRoutes);
+app.use('/api', apiRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

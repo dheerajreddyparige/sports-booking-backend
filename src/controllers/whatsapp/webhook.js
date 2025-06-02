@@ -202,16 +202,68 @@ class WhatsAppWebhookController {
   }
 
   /**
-   * Handles an interactive message (list, button, etc.)
+   * Handles an interactive message
    * @param {Object} message - Message object
    * @param {Array} contacts - Contacts array
    */
   static async handleInteractiveMessage(message, contacts) {
     const { from, interactive } = message;
-    console.log('🔄 Interactive message:', interactive);
+    console.log('🔄 Interactive message received:', interactive.type);
     
-    // Process interactive message through the service
-    await whatsappMessaging.processIncomingMessage(message);
+    try {
+      // Process the message through the WhatsApp messaging service
+      console.log('🔄 Processing interactive message...');
+      const result = await whatsappMessaging.processIncomingMessage(message);
+      
+      // Handle payment option selections specifically
+      if (interactive.type === 'button_reply') {
+        const buttonId = interactive.button_reply.id;
+        
+        // Handle payment option selections
+        if (buttonId === 'pay_upi' || buttonId === 'pay_razorpay') {
+          console.log(`💳 User selected payment method: ${buttonId}`);
+          
+          // Find the latest pending booking for this user
+          const bookingService = require('../../services/bookingService');
+          const latestBooking = await bookingService.getLatestPendingBookingByPhone(from);
+          
+          if (!latestBooking) {
+            console.log('❌ No pending booking found for this user');
+            await whatsappMessaging.sendTextMessage(from, 'Sorry, we could not find a pending booking for you. Please try booking again.');
+            return;
+          }
+          
+          // Process payment based on selected method
+          const handleFlowCompletion = require('./payments/handleFlowCompletion');
+          if (buttonId === 'pay_upi') {
+            await handleFlowCompletion.processUpiPayment({
+              body: { to: from, booking_id: latestBooking.booking_id }
+            }, { status: () => ({ json: () => {} }) });
+          } else if (buttonId === 'pay_razorpay') {
+            await handleFlowCompletion.processRazorpayPayment({
+              body: { to: from, booking_id: latestBooking.booking_id }
+            }, { status: () => ({ json: () => {} }) });
+          }
+          
+          console.log('✅ Payment processing initiated');
+        }
+      }
+      
+      // Log processing result
+      if (result && result.success) {
+        console.log(`✅ Interactive message successfully processed: ${result.action || 'Action taken'}`);
+      }
+    } catch (error) {
+      console.error('❌ Error handling interactive message:', error);
+      
+      // Send fallback message in case of errors
+      try {
+        await whatsappMessaging.sendMainMenuMessage(from);
+        console.log('✅ Sent main menu message as error fallback');
+      } catch (fallbackError) {
+        console.error('❌ Critical error sending fallback message:', fallbackError);
+      }
+    }
   }
 
   static async handleButtonMessage(message, contacts) {
