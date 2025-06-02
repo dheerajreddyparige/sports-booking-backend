@@ -43,6 +43,9 @@ class SportConfig {
     let query = 'SELECT sc.*, mh.day, mh.start_time as mh_start_time, mh.end_time as mh_end_time FROM sport_configs sc';
     let params = [];
     
+    // Left join with maintenance hours
+    query += ' LEFT JOIN maintenance_hours mh ON sc.id = mh.sport_config_id';
+    
     // Apply filters
     let whereClause = [];
     
@@ -59,9 +62,6 @@ class SportConfig {
     if (whereClause.length > 0) {
       query += ' WHERE ' + whereClause.join(' AND ');
     }
-    
-    // Left join with maintenance hours
-    query += ' LEFT JOIN maintenance_hours mh ON sc.id = mh.sport_config_id';
     
     const [rows] = await pool.query(query, params);
     

@@ -147,12 +147,12 @@ async function processIncomingMessage(message) {
       return { success: false, reason: 'duplicate_message' };
     }
     
-    // Get or create flow state for this user
-    let flowState = await FlowsState.findOne({ phoneNumber: from }).sort({ updatedAt: -1 });
+    // Get most recent flow state for this user
+    let flowState = await FlowsState.findOne({ phoneNumber: from });
     
     if (!flowState) {
       // Create new flow state
-      flowState = new FlowsState({
+      flowState = await FlowsState.create({
         flowToken: `flow_${from}_${Date.now()}`,
         phoneNumber: from,
         screen: 'welcome',
@@ -160,25 +160,30 @@ async function processIncomingMessage(message) {
       });
     } else {
       // Add this message ID to processed messages
-      flowState.processedMessages.push(messageId);
+      const updatedProcessedMessages = [...(flowState.processedMessages || []), messageId];
+      await FlowsState.update(flowState.id, {
+        processedMessages: updatedProcessedMessages
+      });
+      flowState.processedMessages = updatedProcessedMessages;
     }
-    
-    // Save flow state
-    await flowState.save();
     
     // Handle different message types
     if (type === 'text') {
       const { text } = message;
-      const messageText = text.body.toLowerCase();
+      const messageText = text.body.toLowerCase().trim();
       
-      // Check for keywords in the message
-      if (messageText.includes('hello') || messageText.includes('hi') || messageText.includes('start')) {
+      // Check for greeting keywords in the message
+      if (messageText === 'hello' || messageText === 'hi' || messageText === 'start' || 
+          messageText === 'hey' || messageText === 'hola') {
+        console.log('👋 User sent greeting message, sending language selection...');
+        
         // Send welcome message with language selection
         await sendLanguageSelectionMessage(from);
         
         // Update flow state
-        flowState.screen = 'language_selection';
-        await flowState.save();
+        await FlowsState.update(flowState.id, { screen: 'language_selection' });
+        
+        return { success: true, action: 'language_selection_sent' };
       }
     } else if (type === 'interactive') {
       const { interactive } = message;
@@ -189,733 +194,59 @@ async function processIncomingMessage(message) {
         
         if (buttonId === 'language_english') {
           // User selected English language
-          flowState.language = 'english';
+          await FlowsState.update(flowState.id, { language: 'english' });
+          
+          // Send main menu
           await sendMainMenuMessage(from);
           
           // Update flow state
-          flowState.screen = 'main_menu';
-          await flowState.save();
+          await FlowsState.update(flowState.id, { screen: 'main_menu' });
+          
+          return { success: true, action: 'english_selected_main_menu_sent' };
         } else if (buttonId === 'language_telugu') {
-          // User selected Telugu language (to be implemented later)
-          flowState.language = 'telugu';
-          await whatsappService.sendTextMessage(from, 'Telugu language support coming soon! Please select English for now.');
-          await sendLanguageSelectionMessage(from);
+          // User selected Telugu language
+          await FlowsState.update(flowState.id, { language: 'telugu' });
           
-          // Keep in language selection
-          flowState.screen = 'language_selection';
-          await flowState.save();
-        } else if (buttonId === 'new_booking') {
-          // Send WhatsApp Flow for booking
-          await sendBookingFlow(from);
+          // For now, just use English flow with Telugu messages
+          // In future, implement full Telugu support
+          await sendMainMenuMessage(from, 'telugu');
           
           // Update flow state
-          flowState.screen = 'booking_flow';
-          await flowState.save();
-        } else if (buttonId === 'my_bookings') {
-          // Get user's bookings from database
-          const Booking = require('../models/mysql/Booking');
-          const bookings = await Booking.find({ customerPhone: from }).sort({ date: -1 }).limit(5);
+          await FlowsState.update(flowState.id, { screen: 'main_menu' });
           
-          // Create and send bookings list template
-          const messageTemplates = require('../utils/whatsappMessageTemplates');
-          const bookingsTemplate = messageTemplates.createUserBookingsTemplate(from, bookings);
-          await whatsappService.sendRawMessage(bookingsTemplate);
-          
-          // Update flow state
-          flowState.screen = 'view_bookings';
-          await flowState.save();
-        } else if (buttonId === 'available_slots') {
-          // Send available time slots
-          await whatsappService.sendTextMessage(from, 'Available time slots feature coming soon!');
-        } else if (buttonId === 'view_bookings') {
-          // Get user's bookings from database
-          const Booking = require('../models/Booking');
-          const bookings = await Booking.find({ customerPhone: from }).sort({ date: -1 }).limit(5);
-          
-          // Create and send bookings list template
-          const messageTemplates = require('../utils/whatsappMessageTemplates');
-          const bookingsTemplate = messageTemplates.createUserBookingsTemplate(from, bookings);
-          await whatsappService.sendRawMessage(bookingsTemplate);
-          
-          // Update flow state
-          flowState.screen = 'view_bookings';
-          await flowState.save();
-        } else if (buttonId === 'cancel_booking') {
-          // Send message about canceling bookings
-          await whatsappService.sendTextMessage(
-            from,
-            'To cancel a booking, please select which one. This feature is coming soon!'
-          );
-        } 
-        // Handle duration selection
-        else if (buttonId.startsWith('duration_')) {
-          // Extract the duration from the ID
-          const duration = parseInt(buttonId.replace('duration_', ''));
-          // Get sport and date from flow state
-          const sport = flowState.sport;
-          const selectedDate = flowState.date;
-          if (!sport || !selectedDate) {
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we couldn\'t find your sport or date selection. Please start over.'
-            );
-            return;
-          }
-          // Update flow state
-          flowState.duration = duration;
-          flowState.screen = 'time_period_selection';
-          await flowState.save();
-          // Send morning/afternoon/evening selection buttons
-          const periodButtons = {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: from,
-            type: 'interactive',
-            interactive: {
-              type: 'button',
-              body: {
-                text: 'Select a time period:'
-              },
-              action: {
-                buttons: [
-                  {
-                    type: 'reply',
-                    reply: { id: 'period_morning', title: 'Morning' }
-                  },
-                  {
-                    type: 'reply',
-                    reply: { id: 'period_afternoon', title: 'Afternoon' }
-                  },
-                  {
-                    type: 'reply',
-                    reply: { id: 'period_evening', title: 'Evening' }
-                  }
-                ]
-              }
-            }
-          };
-          await whatsappService.sendRawMessage(periodButtons);
-        }
-        // Handle period selection (morning, afternoon, evening)
-        else if (buttonId === 'period_morning' || buttonId === 'period_afternoon' || buttonId === 'period_evening') {
-          // Save selected period in flow state
-          let selectedPeriod = '';
-          if (buttonId === 'period_morning') selectedPeriod = 'morning';
-          if (buttonId === 'period_afternoon') selectedPeriod = 'afternoon';
-          if (buttonId === 'period_evening') selectedPeriod = 'evening';
-          flowState.period = selectedPeriod;
-          flowState.screen = 'slot_selection';
-          await flowState.save();
-
-          // Fetch available slots for the selected sport, date, duration, and period
-          const sport = flowState.sport;
-          const selectedDate = flowState.date;
-          const duration = flowState.duration;
-          if (!sport || !selectedDate || !duration) {
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we couldn\'t find your booking details. Please start over.'
-            );
-            return;
-          }
-          // Get all available slots
-          const { getAvailableSlots } = require('../utils/slotUtils');
-          const allSlots = await getAvailableSlots(sport, selectedDate, duration);
-          
-          // Filter slots by selected period (morning, afternoon, evening)
-          let filteredSlots = [];
-          if (selectedPeriod === 'morning') {
-            // Morning: 5:00 AM to 11:59 AM
-            filteredSlots = allSlots.filter(slot => {
-              const hour = parseInt(slot.id.split(':')[0]);
-              return hour >= 5 && hour < 12;
-            });
-          } else if (selectedPeriod === 'afternoon') {
-            // Afternoon: 12:00 PM to 4:59 PM
-            filteredSlots = allSlots.filter(slot => {
-              const hour = parseInt(slot.id.split(':')[0]);
-              return hour >= 12 && hour < 17;
-            });
-          } else if (selectedPeriod === 'evening') {
-            // Evening: 5:00 PM to 11:00 PM
-            filteredSlots = allSlots.filter(slot => {
-              const hour = parseInt(slot.id.split(':')[0]);
-              return hour >= 17 && hour < 23;
-            });
-          }
-          
-          // Only keep enabled slots
-          const availableSlots = filteredSlots.filter(slot => slot.enabled);
-          flowState.availableSlots = availableSlots;
-          await flowState.save();
-
-          if (!availableSlots || availableSlots.length === 0) {
-            await whatsappService.sendTextMessage(
-              from,
-              `Sorry, no slots are available for ${selectedPeriod}. Please try another period or date.`
-            );
-            return;
-          }
-
-          // Paginate slots (show up to 9 per page as WhatsApp interactive list)
-          const SLOTS_PER_PAGE = 9;
-          let page = flowState.slotPage || 0;
-          const startIdx = page * SLOTS_PER_PAGE;
-          const endIdx = startIdx + SLOTS_PER_PAGE;
-          const slotsToShow = availableSlots.slice(startIdx, endIdx);
-          const hasMore = availableSlots.length > endIdx;
-
-          // Prepare rows for WhatsApp interactive list
-          let slotRows = slotsToShow.map(slot => ({
-            id: `slot_${slot.id}`,
-            title: slot.label || slot.title || slot.id,
-            description: slot.description || ''
-          }));
-          if (hasMore) {
-            slotRows.push({
-              id: `slots_next_page_${page + 1}`,
-              title: 'Show more',
-              description: 'See more available slots'
-            });
-          }
-
-          const slotSelectionMessage = {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: from,
-            type: 'interactive',
-            interactive: {
-              type: 'list',
-              header: {
-                type: 'text',
-                text: `Available slots for ${selectedPeriod}`
-              },
-              body: {
-                text: `Please select a time slot for ${selectedPeriod}:`
-              },
-              footer: {
-                text: `${availableSlots.length} slots available${hasMore ? ' - Use Show more to see next slots' : ''}`
-              },
-              action: {
-                button: 'Select Slot',
-                sections: [
-                  {
-                    title: 'Available Times',
-                    rows: slotRows
-                  }
-                ]
-              }
-            }
-          };
-          await whatsappService.sendRawMessage(slotSelectionMessage);
-        }
-        // Handle payment confirmation
-        else if (buttonId === 'pay_now') {
-          try {
-            // Get booking details from flow state
-          if (!flowState.sport || !flowState.date || !flowState.duration || !flowState.selectedSlotId) {
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we couldn\'t find your booking details. Please start over.'
-            );
-            return;
-          }
-          
-          // Verify booking exists in database
-          let booking = await Booking.findById(flowState.bookingId);
-          
-          if (flowState.bookingId && !booking) {
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we couldn\'t find your booking in our system. Please start over.'
-            );
-            return;
-          }
-            
-            // Create a booking record in the database
-            const Court = require('../models/Court');
-            
-            // Find an available court for this sport
-            const courts = await Court.find({ sport: flowState.sport, isActive: true });
-            if (!courts || courts.length === 0) {
-              await whatsappService.sendTextMessage(
-                from,
-                `Sorry, no courts are available for ${flowState.sport}. Please try a different sport.`
-              );
-              return;
-            }
-            
-            // Use the first available court
-            const court = courts[0];
-            
-            // Get selected time slot
-            const selectedSlot = flowState.availableSlots.find(slot => slot.id === flowState.selectedSlotId);
-            if (!selectedSlot) {
-              console.error('❌ Selected slot not found:', flowState.selectedSlotId, 'Available slots:', flowState.availableSlots);
-              await whatsappService.sendTextMessage(
-                from,
-                'Sorry, we couldn\'t find your selected time slot. Please try again.'
-              );
-              return;
-            }
-            console.log('✅ Found selected slot:', selectedSlot);
-            
-            // Parse time slot (format: "10:00")
-            const startTime = selectedSlot.id;
-            
-            // Calculate end time based on duration
-            const [startHour, startMinute] = startTime.split(':').map(Number);
-            const durationHours = flowState.duration;
-            const endHourDecimal = startHour + durationHours;
-            const endHour = Math.floor(endHourDecimal);
-            const endMinute = startMinute + ((endHourDecimal - endHour) * 60);
-            const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
-            
-            // Get price details
-            const flowDbUtils = require('../utils/flowDbUtils');
-            const priceDetails = await flowDbUtils.calculatePrice(
-              flowState.sport,
-              flowState.duration,
-              flowState.date,
-              startTime
-            );
-            
-            // Create a new booking with pending payment status
-            booking = new Booking({
-              userId: flowState.userId || 'guest',
-              sport: flowState.sport,
-              courtId: court.courtId,
-              date: new Date(flowState.date),
-              startTime,
-              endTime,
-              duration: durationHours,
-              amount: priceDetails.totalAmount,
-              customerName: flowState.name || 'Guest',
-              customerEmail: flowState.email || '',
-              customerPhone: from,
-              specialRequirements: '',
-              status: 'pending',
-              paymentStatus: 'pending',
-              paymentMethod: 'razorpay',
-              paymentInitiatedAt: new Date(),
-              createdAt: new Date(),
-              updatedAt: new Date()
-            });
-            
-            await booking.save();
-            
-            // Update flow state with booking ID
-            flowState.bookingId = booking._id.toString();
-            flowState.screen = 'payment_processing';
-            await flowState.save();
-            
-            // Create Razorpay order
-            const razorpayService = require('./razorpay');
-            const orderData = {
-              amount: priceDetails.totalAmount,
-              currency: 'INR',
-              receipt: `booking_${booking._id.toString()}`,
-              notes: {
-                booking_id: booking._id.toString(),
-                customer_phone: from,
-                sport: flowState.sport,
-                date: flowState.date,
-                time: startTime
-              }
-            };
-            
-            const order = await razorpayService.createOrder(orderData);
-            
-            // Update booking with order ID
-            booking.transactionId = order.id;
-            await booking.save();
-            
-            // Format booking details for payment link
-            const bookingDetails = {
-              bookingId: booking._id.toString(),
-              phoneNumber: from,
-              sport: flowState.sport.charAt(0).toUpperCase() + flowState.sport.slice(1),
-              date: new Date(flowState.date).toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                month: 'long', 
-                day: 'numeric' 
-              }),
-              time: selectedSlot.title,
-              duration: flowState.duration,
-              court: court.name,
-              baseRate: priceDetails.baseRate,
-              discountAmount: priceDetails.discountAmount,
-              discountPercent: priceDetails.discountPercent,
-              totalPrice: priceDetails.totalAmount
-            };
-            
-            // Send Razorpay payment link
-            const messageTemplates = require('../utils/whatsappMessageTemplates');
-            const razorpayTemplate = messageTemplates.createRazorpayLinkTemplate(from, bookingDetails, { orderId: order.id });
-            await whatsappService.sendRawMessage(razorpayTemplate);
-            
-            // Set payment timeout (5 minutes)
-            razorpayService.setPaymentTimeout(booking._id.toString(), order.id);
-            
-            // Send payment pending status
-            const pendingTemplate = messageTemplates.createPaymentStatusTemplate(from, 'pending', bookingDetails);
-            await whatsappService.sendRawMessage(pendingTemplate);
-          } catch (error) {
-            console.error('❌ Error processing payment:', error);
-            
-            // Send error message
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we encountered an error while processing your payment. Please try again later.'
-            );
-          }
-        }
-        // Handle direct payment option
-        else if (buttonId === 'direct_pay') {
-          try {
-            // Get booking details from flow state
-          if (!flowState.sport || !flowState.date || !flowState.duration || !flowState.selectedSlotId) {
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we couldn\'t find your booking details. Please start over.'
-            );
-            return;
-          }
-          
-          // Verify booking exists in database
-          let booking = await Booking.findById(flowState.bookingId);
-          
-          if (flowState.bookingId && !booking) {
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we couldn\'t find your booking in our system. Please start over.'
-            );
-            return;
-          }
-            
-            // Create a booking record in the database
-            const Court = require('../models/Court');
-            
-            // Find an available court for this sport
-            const courts = await Court.find({ sport: flowState.sport, isActive: true });
-            if (!courts || courts.length === 0) {
-              await whatsappService.sendTextMessage(
-                from,
-                `Sorry, no courts are available for ${flowState.sport}. Please try a different sport.`
-              );
-              return;
-            }
-            
-            // Use the first available court
-            const court = courts[0];
-            
-            // Get selected time slot
-            const selectedSlot = flowState.availableSlots.find(slot => slot.id === flowState.selectedSlotId);
-            if (!selectedSlot) {
-              console.error('❌ Selected slot not found:', flowState.selectedSlotId, 'Available slots:', flowState.availableSlots);
-              await whatsappService.sendTextMessage(
-                from,
-                'Sorry, we couldn\'t find your selected time slot. Please try again.'
-              );
-              return;
-            }
-            console.log('✅ Found selected slot:', selectedSlot);
-            
-            // Parse time slot (format: "10:00")
-            const startTime = selectedSlot.id;
-            
-            // Calculate end time based on duration
-            const [startHour, startMinute] = startTime.split(':').map(Number);
-            const durationHours = flowState.duration;
-            const endHourDecimal = startHour + durationHours;
-            const endHour = Math.floor(endHourDecimal);
-            const endMinute = startMinute + ((endHourDecimal - endHour) * 60);
-            const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
-            
-            // Get price details
-            const flowDbUtils = require('../utils/flowDbUtils');
-            const priceDetails = await flowDbUtils.calculatePrice(
-              flowState.sport,
-              flowState.duration,
-              flowState.date,
-              startTime
-            );
-            
-            // Create a new booking with confirmed status (direct payment)
-            booking = new Booking({
-              userId: flowState.userId || 'guest',
-              sport: flowState.sport,
-              courtId: court.courtId,
-              date: new Date(flowState.date),
-              startTime,
-              endTime,
-              duration: durationHours,
-              amount: priceDetails.totalAmount,
-              customerName: flowState.name || 'Guest',
-              customerEmail: flowState.email || '',
-              customerPhone: from,
-              specialRequirements: '',
-              status: 'confirmed',
-              paymentStatus: 'paid',
-              paymentMethod: 'cash',
-              paymentCompletedAt: new Date(),
-              createdAt: new Date(),
-              updatedAt: new Date()
-            });
-            
-            await booking.save();
-            
-            // Update flow state with booking ID
-            flowState.bookingId = booking._id.toString();
-            flowState.screen = 'booking_confirmed';
-            await flowState.save();
-            
-            // Format booking details for confirmation message
-            const bookingDetails = {
-              bookingId: booking._id.toString(),
-              phoneNumber: from,
-              sport: flowState.sport.charAt(0).toUpperCase() + flowState.sport.slice(1),
-              date: new Date(flowState.date).toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                month: 'long', 
-                day: 'numeric' 
-              }),
-              time: selectedSlot.title,
-              startTime: startTime,
-              endTime: endTime,
-              duration: flowState.duration,
-              court: court.name || 'Standard Court',
-              baseRate: priceDetails.baseRate,
-              discountAmount: priceDetails.discountAmount,
-              discountPercent: priceDetails.discountPercent,
-              totalPrice: priceDetails.totalAmount,
-              dayType: priceDetails.dayType,
-              timePeriod: priceDetails.timePeriod
-            };
-            
-            // First send a clear text confirmation of the booking
-            await whatsappService.sendTextMessage(
-              from,
-              `✅ Booking Confirmed! ✅\n\nThank you for your direct payment booking.\n\nDetails:\n• Sport: ${bookingDetails.sport}\n• Date: ${bookingDetails.date}\n• Time: ${bookingDetails.time} (${startTime} - ${endTime})\n• Duration: ${bookingDetails.duration} hour${bookingDetails.duration > 1 ? 's' : ''}\n• Court: ${bookingDetails.court}\n• Amount Paid: ₹${bookingDetails.totalPrice}\n\nYour booking has been confirmed and payment marked as completed.`
-            );
-            
-            // Send payment success message
-            const messageTemplates = require('../utils/whatsappMessageTemplates');
-            
-            // First send a detailed confirmation message with all booking details
-            const confirmationTemplate = messageTemplates.createBookingConfirmationTemplate(bookingDetails);
-            await whatsappService.sendRawMessage(confirmationTemplate);
-            
-            // Then send a follow-up message with a receipt/ticket
-            const successTemplate = messageTemplates.createPaymentStatusTemplate(
-              from,
-              'success',
-              bookingDetails
-            );
-            await whatsappService.sendRawMessage(successTemplate);
-            
-            // Update flow state to mark booking as confirmed
-            flowState.screen = 'booking_confirmed';
-            await flowState.save();
-          } catch (error) {
-            console.error('❌ Error processing direct payment:', error);
-            
-            // Send error message
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we encountered an error while processing your booking. Please try again later.'
-            );
-          }
-        }
-        // Handle payment cancellation
-        else if (buttonId === 'cancel') {
-          await whatsappService.sendTextMessage(
-            from,
-            'Your booking has been cancelled. Feel free to start a new booking when you\'re ready!'
-          );
-          
-          // Update flow state
-          flowState.screen = 'cancelled';
-          await flowState.save();
+          return { success: true, action: 'telugu_selected_main_menu_sent' };
         }
       }
+      
       // Handle list replies
-      else if (interactive.type === 'list_reply') {
+      if (interactive.type === 'list_reply') {
         const listItemId = interactive.list_reply.id;
-        // Handle 'Show more' pagination for time slots
-        if (listItemId.startsWith('show_more_')) {
-          // Extract next page number
-          const nextPage = parseInt(listItemId.replace('show_more_', ''));
-          // Re-send available time slots for the next page
-          await sendAvailableTimeSlots(from, flowState.sport, flowState.date, flowState.duration, nextPage);
-          return;
-        }
-        // Check if this is a sport selection
-        if (listItemId.startsWith('badminton') || 
-            listItemId.startsWith('pickleball') || 
-            listItemId.startsWith('cricket') || 
-            listItemId.startsWith('football')) {
-          // Extract sport from ID
-          const sport = listItemId.split('-')[0];
+        
+        if (listItemId === 'new_booking') {
+          console.log('🔄 User selected new booking, starting booking flow...');
           
           // Update flow state
-          flowState.sport = sport;
-          flowState.screen = 'date_selection';
-          await flowState.save();
+          await FlowsState.update(flowState.id, { screen: 'booking' });
           
-          // Send date selection calendar
-          await sendDateSelectionCalendar(from, sport);
-        }
-        // Check if this is a date selection
-        else if (listItemId.startsWith('date_')) {
-          // Extract the date from the ID
-          const selectedDate = listItemId.replace('date_', '');
+          // Send the WhatsApp Flow for booking
+          await sendBookingFlow(from);
           
-          // Update flow state
-          flowState.date = selectedDate;
-          flowState.screen = 'duration_selection';
-          await flowState.save();
-          
-          // Send duration selection
-          await sendDurationSelection(from, flowState.sport, selectedDate);
-        }
-        // Check if this is a time slot selection
-        else if (listItemId.startsWith('slot_')) {
-          // Extract the slot ID from the ID
-          const slotId = listItemId.replace('slot_', '');
-          console.log('Selected time slot ID:', slotId);
-          
-          try {
-            // Make sure we have the flow state with available slots
-            console.log('Processing time slot selection for slot ID:', slotId);
-            if (!flowState.availableSlots || flowState.availableSlots.length === 0) {
-              console.error('❌ No available slots found in flow state');
-              await whatsappService.sendTextMessage(
-                from,
-                'Sorry, we couldn\'t find your booking details. Please start over.'
-              );
-              return;
-            }
-            
-            // Find the selected slot in available slots
-            const selectedSlot = flowState.availableSlots.find(slot => slot.id === slotId);
-            
-            if (!selectedSlot) {
-              console.error(`❌ Selected slot ${slotId} not found in available slots:`, 
-                flowState.availableSlots.map(s => s.id));
-              await whatsappService.sendTextMessage(
-                from,
-                'Sorry, we couldn\'t find your selected time slot. Please try again.'
-              );
-              return;
-            }
-            
-            // Determine time period for better logging
-            const hour = parseInt(slotId.split(':')[0]);
-            let timePeriod = 'unknown';
-            if (hour >= 6 && hour < 12) timePeriod = 'Morning';
-            else if (hour >= 12 && hour < 17) timePeriod = 'Afternoon';
-            else timePeriod = 'Evening';
-            
-            console.log(`✅ Found selected ${timePeriod} slot: ${slotId}`, selectedSlot);
-            
-            // Update flow state
-            flowState.selectedSlotId = slotId;
-            flowState.screen = 'payment';
-            await flowState.save();
-            
-            // Get booking details for payment template
-            const flowDbUtils = require('../utils/flowDbUtils');
-            const priceDetails = await flowDbUtils.calculatePrice(
-              flowState.sport,
-              flowState.duration,
-              flowState.date,
-              slotId
-            );
-            
-            // Format booking details for payment message
-            const bookingDetails = {
-              phoneNumber: from,
-              sport: flowState.sport.charAt(0).toUpperCase() + flowState.sport.slice(1),
-              date: new Date(flowState.date).toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                month: 'long', 
-                day: 'numeric' 
-              }),
-              time: selectedSlot.title,
-              duration: flowState.duration,
-              court: `${flowState.sport.charAt(0).toUpperCase() + flowState.sport.slice(1)} Court`,
-              baseRate: priceDetails.baseRate,
-              discountAmount: priceDetails.discountAmount,
-              discountPercent: priceDetails.discountPercent,
-              totalPrice: priceDetails.totalAmount
-            };
-            
-            // Create payment details
-            const paymentDetails = {
-              orderId: `order_${Date.now()}`
-            };
-            
-            // Send payment template
-            const messageTemplates = require('../utils/whatsappMessageTemplates');
-            const paymentTemplate = messageTemplates.createPaymentTemplate(from, bookingDetails, paymentDetails);
-            await whatsappService.sendRawMessage(paymentTemplate);
-          } catch (error) {
-            console.error('❌ Error processing time slot selection:', error);
-            
-            // Send error message
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we encountered an error while processing your selection. Please try again later.'
-            );
-          }
-        }
-        // Handle pagination for time slots
-        else if (listItemId === 'next_page' || listItemId === 'prev_page') {
-          try {
-            // Make sure we have the flow state with pagination info
-            if (!flowState.sport || !flowState.date || !flowState.duration) {
-              await whatsappService.sendTextMessage(
-                from,
-                'Sorry, we couldn\'t find your booking details. Please start over.'
-              );
-              return;
-            }
-            
-            // Update the current page based on the button clicked
-            if (listItemId === 'next_page') {
-              flowState.currentPage = (flowState.currentPage || 0) + 1;
-            } else {
-              flowState.currentPage = Math.max((flowState.currentPage || 1) - 1, 0);
-            }
-            
-            // Save the updated flow state
-            await flowState.save();
-            
-            // Send the updated time slots page
-            await sendAvailableTimeSlots(
-              from, 
-              flowState.sport, 
-              flowState.date, 
-              flowState.duration
-            );
-          } catch (error) {
-            console.error('❌ Error handling pagination:', error);
-            
-            // Send error message
-            await whatsappService.sendTextMessage(
-              from,
-              'Sorry, we encountered an error while changing pages. Please try again later.'
-            );
-          }
+          return { success: true, action: 'booking_flow_started' };
+        } else if (listItemId === 'my_bookings') {
+          // Handle my bookings selection (to be implemented)
+          return { success: true, action: 'my_bookings_selected' };
+        } else if (listItemId === 'available_slots') {
+          // Handle available slots selection (to be implemented)
+          return { success: true, action: 'available_slots_selected' };
         }
       }
     }
     
-    return { success: true };
+    console.log(`⚠️ No specific handler for message: ${type}`);
+    return { success: false, reason: 'no_handler' };
   } catch (error) {
     console.error('❌ Error processing incoming message:', error);
-    throw error;
+    return { success: false, error };
   }
 }
 
@@ -1499,11 +830,35 @@ async function sendLanguageSelectionMessage(phoneNumber) {
 /**
  * Sends main menu message with booking options
  * @param {string} phoneNumber - Recipient's phone number
+ * @param {string} language - Selected language (english or telugu)
  * @returns {Promise<Object>} - API response
  */
-async function sendMainMenuMessage(phoneNumber) {
+async function sendMainMenuMessage(phoneNumber, language = 'english') {
   try {
-    console.log('🔄 Sending main menu message...');
+    console.log(`🔄 Sending main menu message in ${language}...`);
+    
+    // Set text based on selected language
+    const headerText = language === 'english' ? 'Main Menu' : 'ప్రధాన మెను';
+    const bodyText = language === 'english' ? 
+      'What would you like to do today?' : 
+      'మీరు ఈరోజు ఏమి చేయాలనుకుంటున్నారు?';
+    const footerText = language === 'english' ? 
+      'Select an option from the menu' : 
+      'మెనుల నుండి ఒక ఎంపికను ఎంచుకోండి';
+    const buttonText = language === 'english' ? 'Select Option' : 'ఎంపికను ఎంచుకోండి';
+    
+    // Option titles based on language
+    const newBookingTitle = language === 'english' ? 'New Booking' : 'కొత్త బుకింగ్';
+    const myBookingsTitle = language === 'english' ? 'My Bookings' : 'నా బుకింగ్‌లు';
+    const availableSlotsTitle = language === 'english' ? 'Available Time Slots' : 'అందుబాటులో ఉన్న సమయ స్లాట్లు';
+    
+    // Descriptions based on language
+    const newBookingDesc = language === 'english' ? 'Book a new sports session' : 'క్రీడా సెషన్ బుక్ చేసుకోండి';
+    const myBookingsDesc = language === 'english' ? 'View your existing bookings' : 'మీ ప్రస్తుత బుకింగ్‌లను వీక్షించండి';
+    const availableSlotsDesc = language === 'english' ? 'Check available time slots' : 'అందుబాటులో ఉన్న సమయ స్లాట్లను తనిఖీ చేయండి';
+    
+    // Section title based on language
+    const sectionTitle = language === 'english' ? 'Booking Options' : 'బుకింగ్ ఎంపికలు';
     
     const mainMenuMessage = {
       messaging_product: 'whatsapp',
@@ -1514,34 +869,34 @@ async function sendMainMenuMessage(phoneNumber) {
         type: 'list',
         header: {
           type: 'text',
-          text: 'Main Menu'
+          text: headerText
         },
         body: {
-          text: 'What would you like to do today?'
+          text: bodyText
         },
         footer: {
-          text: 'Select an option from the menu'
+          text: footerText
         },
         action: {
-          button: 'Select Option',
+          button: buttonText,
           sections: [
             {
-              title: 'Booking Options',
+              title: sectionTitle,
               rows: [
                 {
                   id: 'new_booking',
-                  title: 'New Booking',
-                  description: 'Book a new sports session'
+                  title: newBookingTitle,
+                  description: newBookingDesc
                 },
                 {
                   id: 'my_bookings',
-                  title: 'My Bookings',
-                  description: 'View your existing bookings'
+                  title: myBookingsTitle,
+                  description: myBookingsDesc
                 },
                 {
                   id: 'available_slots',
-                  title: 'Available Time Slots',
-                  description: 'Check available time slots'
+                  title: availableSlotsTitle,
+                  description: availableSlotsDesc
                 }
               ]
             }
@@ -1571,6 +926,15 @@ async function sendBookingFlow(phoneNumber) {
     // Generate a unique flow token
     const flowToken = `booking_${phoneNumber}_${Date.now()}`;
     
+    // Save the flow token and phone number in the database for later use
+    const FlowsState = require('../models/mysql/FlowsState');
+    const flowState = await FlowsState.findOne({ phoneNumber }).sort({ updatedAt: -1 });
+    if (flowState) {
+      flowState.flowToken = flowToken;
+      flowState.screen = 'booking_flow';
+      await flowState.save();
+    }
+    
     const flowMessage = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -1595,9 +959,9 @@ async function sendBookingFlow(phoneNumber) {
             flow_token: flowToken,
             flow_id: process.env.WHATSAPP_FLOW_ID || 'YOUR_FLOW_ID',
             flow_cta: 'Book Now',
-            flow_action: 'navigate',
+            flow_action: 'INIT',
             flow_action_payload: {
-              screen: 'BOOKING_SCREEN',
+              screen: 'BOOKING',
               data: {
                 flow_token: flowToken,
                 phone_number: phoneNumber

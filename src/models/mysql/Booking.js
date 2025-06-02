@@ -59,6 +59,20 @@ class Booking {
       params.push(filter.status);
     }
     
+    // Handle status $nin filter (not in)
+    if (filter.status && filter.status.$nin) {
+      const notInStatuses = filter.status.$nin;
+      if (Array.isArray(notInStatuses) && notInStatuses.length > 0) {
+        const placeholders = notInStatuses.map(() => '?').join(',');
+        query += ` AND b.status NOT IN (${placeholders})`;
+        params.push(...notInStatuses);
+      }
+    } else if (filter.status && typeof filter.status === 'object' && '$nin' in filter.status) {
+      // Handle as single value if not an array
+      query += ' AND b.status != ?';
+      params.push(filter.status.$nin);
+    }
+    
     if (filter.flowToken) {
       query += ' AND b.flow_token = ?';
       params.push(filter.flowToken);

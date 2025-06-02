@@ -154,8 +154,51 @@ class WhatsAppWebhookController {
    */
   static async handleTextMessage(message, contacts) {
     const { from, text } = message;
-    console.log('📝 Text message:', text.body);
-    await whatsappMessaging.processIncomingMessage(message);
+    console.log('📝 Text message received:', text.body);
+    
+    try {
+      // Get customer info from contacts if available
+      const customer = contacts && contacts.length > 0 ? contacts[0] : null;
+      const customerName = customer ? customer.profile?.name || 'Customer' : 'Customer';
+      
+      console.log(`👤 Message from: ${from} (${customerName})`);
+      
+      // Process the message through the WhatsApp messaging service
+      console.log('🔄 Processing message through messaging service...');
+      const result = await whatsappMessaging.processIncomingMessage(message);
+      
+      // Log processing result
+      if (result && result.success) {
+        console.log(`✅ Message successfully processed: ${result.action || 'Action taken'}`);
+      } else {
+        // If the message didn't match any specific patterns, send default language selection
+        console.log('⚠️ Message not specifically handled, sending default welcome message');
+        console.log('Message content:', text.body.toLowerCase());
+        
+        // Check if it looks like a greeting
+        const messageText = text.body.toLowerCase().trim();
+        if (messageText === 'hello' || messageText === 'hi' || messageText === 'hey' || 
+            messageText === 'start' || messageText === 'help' || messageText.includes('hello') || 
+            messageText.includes('hi ')) {
+          await whatsappMessaging.sendLanguageSelectionMessage(from);
+          console.log('✅ Sent language selection message as fallback');
+        } else {
+          // For non-greeting messages, just send a general welcome message
+          await whatsappMessaging.sendWelcomeMessage(from);
+          console.log('✅ Sent general welcome message as fallback');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error handling text message:', error);
+      
+      // Send fallback message in case of errors
+      try {
+        await whatsappMessaging.sendLanguageSelectionMessage(from);
+        console.log('✅ Sent language selection message as error fallback');
+      } catch (fallbackError) {
+        console.error('❌ Critical error sending fallback message:', fallbackError);
+      }
+    }
   }
 
   /**

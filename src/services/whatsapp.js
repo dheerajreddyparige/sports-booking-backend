@@ -53,6 +53,60 @@ class WhatsAppService {
   }
 
   /**
+   * Send a text message
+   * @param {String} to - Recipient phone number with country code
+   * @param {String} text - Message text
+   * @returns {Promise<Object>} - API response
+   */
+  async sendTextMessage(to, text) {
+    return this.sendMessage(to, {
+      type: 'text',
+      content: {
+        preview_url: true,
+        body: text
+      }
+    });
+  }
+
+  /**
+   * Send a raw message payload directly to WhatsApp API
+   * @param {Object} payload - Complete message payload
+   * @returns {Promise<Object>} - API response
+   */
+  async sendRawMessage(payload) {
+    try {
+      console.log('📤 Sending raw message payload:', JSON.stringify(payload));
+      
+      // Format the recipient phone number if it exists in the payload
+      if (payload.to) {
+        payload.to = this.formatPhoneNumber(payload.to);
+      }
+      
+      const response = await axios.post(
+        `${this.baseUrl}/messages`,
+        payload,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      // Update customer's last active timestamp if we have the phone number
+      if (payload.to) {
+        await this.updateCustomerActivity(payload.to);
+      }
+
+      console.log('✅ Raw message sent successfully:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Error sending raw WhatsApp message:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Send a template message
    * @param {String} to - Recipient phone number with country code
    * @param {String} templateName - Name of the template
