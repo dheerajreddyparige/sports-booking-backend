@@ -163,6 +163,22 @@ class WhatsAppWebhookController {
       
       console.log(`👤 Message from: ${from} (${customerName})`);
       
+      // Check if it's a greeting message
+      const messageText = text.body.toLowerCase().trim();
+      const greetings = ['hello', 'hi', 'hey', 'hola', 'start', 'help'];
+      const isGreeting = greetings.some(greeting => 
+        messageText === greeting || 
+        messageText.startsWith(`${greeting} `) || 
+        messageText.includes(`${greeting}`)
+      );
+      
+      if (isGreeting) {
+        console.log('👋 Greeting detected, sending language selection...');
+        await whatsappMessaging.sendLanguageSelectionMessage(from);
+        console.log('✅ Language selection message sent in response to greeting');
+        return;
+      }
+      
       // Process the message through the WhatsApp messaging service
       console.log('🔄 Processing message through messaging service...');
       const result = await whatsappMessaging.processIncomingMessage(message);
@@ -173,20 +189,8 @@ class WhatsAppWebhookController {
       } else {
         // If the message didn't match any specific patterns, send default language selection
         console.log('⚠️ Message not specifically handled, sending default welcome message');
-        console.log('Message content:', text.body.toLowerCase());
-        
-        // Check if it looks like a greeting
-        const messageText = text.body.toLowerCase().trim();
-        if (messageText === 'hello' || messageText === 'hi' || messageText === 'hey' || 
-            messageText === 'start' || messageText === 'help' || messageText.includes('hello') || 
-            messageText.includes('hi ')) {
-          await whatsappMessaging.sendLanguageSelectionMessage(from);
-          console.log('✅ Sent language selection message as fallback');
-        } else {
-          // For non-greeting messages, just send a general welcome message
-          await whatsappMessaging.sendWelcomeMessage(from);
-          console.log('✅ Sent general welcome message as fallback');
-        }
+        await whatsappMessaging.sendLanguageSelectionMessage(from);
+        console.log('✅ Sent language selection message as fallback');
       }
     } catch (error) {
       console.error('❌ Error handling text message:', error);
@@ -211,13 +215,67 @@ class WhatsAppWebhookController {
     console.log('🔄 Interactive message received:', interactive.type);
     
     try {
-      // Process the message through the WhatsApp messaging service
-      console.log('🔄 Processing interactive message...');
-      const result = await whatsappMessaging.processIncomingMessage(message);
+      const interactiveType = interactive.type;
       
-      // Handle payment option selections specifically
-      if (interactive.type === 'button_reply') {
+      if (interactiveType === 'button_reply') {
         const buttonId = interactive.button_reply.id;
+        console.log(`🔘 Button reply with ID: ${buttonId}`);
+        
+        // Handle language selection
+        if (buttonId === 'language_english' || buttonId === 'language_telugu') {
+          const language = buttonId === 'language_english' ? 'english' : 'telugu';
+          console.log(`🌐 User selected ${language} language`);
+          
+          // Update flow state with language choice
+          const FlowsState = require('../../models/mysql/FlowsState');
+          const pool = await connectToDatabase();
+          const flowState = await FlowsState.findOne({ phoneNumber: from });
+          
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET language = ?, screen = ? WHERE id = ?',
+              [language, 'main_menu', flowState.id]
+            );
+            console.log(`✅ Flow state updated with language: ${language}`);
+          }
+          
+          // Send main menu in selected language
+          await whatsappMessaging.sendMainMenuMessage(from, language);
+          console.log(`✅ Main menu sent in ${language}`);
+          return;
+        }
+        
+        // Handle new booking button
+        if (buttonId === 'new_booking') {
+          console.log('🔄 User selected new booking button');
+          
+          // Update flow state
+          const FlowsState = require('../../models/mysql/FlowsState');
+          const pool = await connectToDatabase();
+          
+          // Get or create flow state
+          let flowState = await FlowsState.findOne({ phoneNumber: from });
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET screen = ? WHERE id = ?',
+              ['booking', flowState.id]
+            );
+          } else {
+            await FlowsState.create({
+              flowToken: `flow_${from}_${Date.now()}`,
+              phoneNumber: from,
+              screen: 'booking',
+              processedMessages: []
+            });
+          }
+          
+          console.log('✅ Flow state updated for booking');
+          
+          // Send booking flow
+          await whatsappMessaging.sendBookingFlow(from);
+          console.log('✅ Booking flow initiated');
+          return;
+        }
         
         // Handle payment option selections
         if (buttonId === 'pay_upi' || buttonId === 'pay_razorpay') {
@@ -246,12 +304,66 @@ class WhatsAppWebhookController {
           }
           
           console.log('✅ Payment processing initiated');
+          return;
         }
-      }
-      
-      // Log processing result
-      if (result && result.success) {
-        console.log(`✅ Interactive message successfully processed: ${result.action || 'Action taken'}`);
+        
+        // Process other button replies
+        await whatsappMessaging.processIncomingMessage(message);
+      } 
+      else if (interactiveType === 'list_reply') {
+        const listItemId = interactive.list_reply.id;
+        console.log(`📋 List selection with ID: ${listItemId}`);
+        
+        // Handle main menu options
+        if (listItemId === 'new_booking') {
+          console.log('🔄 User selected new booking from list');
+          
+          // Update flow state
+          const FlowsState = require('../../models/mysql/FlowsState');
+          const pool = await connectToDatabase();
+          
+          // Get or create flow state
+          let flowState = await FlowsState.findOne({ phoneNumber: from });
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET screen = ? WHERE id = ?',
+              ['booking', flowState.id]
+            );
+          } else {
+            await FlowsState.create({
+              flowToken: `flow_${from}_${Date.now()}`,
+              phoneNumber: from,
+              screen: 'booking',
+              processedMessages: []
+            });
+          }
+          
+          console.log('✅ Flow state updated for booking');
+          
+          // Send booking flow
+          await whatsappMessaging.sendBookingFlow(from);
+          console.log('✅ Booking flow initiated from list selection');
+          return;
+        }
+        
+        if (listItemId === 'my_bookings') {
+          console.log('📋 User requested to view their bookings');
+          await whatsappMessaging.sendTextMessage(from, "You can view your upcoming bookings here. This feature is coming soon!");
+          return;
+        }
+        
+        if (listItemId === 'available_slots') {
+          console.log('🕒 User requested to view available slots');
+          await whatsappMessaging.sendTextMessage(from, "You can check available time slots here. This feature is coming soon!");
+          return;
+        }
+        
+        // Process other list replies
+        await whatsappMessaging.processIncomingMessage(message);
+      } 
+      else {
+        // Process other interactive types
+        await whatsappMessaging.processIncomingMessage(message);
       }
     } catch (error) {
       console.error('❌ Error handling interactive message:', error);

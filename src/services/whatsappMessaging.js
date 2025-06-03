@@ -214,7 +214,7 @@ async function processIncomingMessage(message) {
           
           // Send main menu
           console.log('📤 Sending main menu in English...');
-          await sendMainMenuMessage(from);
+          await sendMainMenuMessage(from, 'english');
           
           return { success: true, action: 'english_selected_main_menu_sent' };
         } else if (buttonId === 'language_telugu') {
@@ -228,12 +228,26 @@ async function processIncomingMessage(message) {
             );
           }
           
-          // For now, just use English flow with Telugu messages
-          // In future, implement full Telugu support
+          // Send main menu in Telugu
           console.log('📤 Sending main menu in Telugu...');
           await sendMainMenuMessage(from, 'telugu');
           
           return { success: true, action: 'telugu_selected_main_menu_sent' };
+        } else if (buttonId === 'new_booking') {
+          console.log('🔄 User selected new booking from buttons, starting booking flow...');
+          
+          // Update flow state directly
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET screen = ? WHERE id = ?',
+              ['booking', flowState.id]
+            );
+          }
+          
+          // Send the WhatsApp Flow for booking
+          await sendBookingFlow(from);
+          
+          return { success: true, action: 'booking_flow_started' };
         }
       }
       
@@ -257,10 +271,46 @@ async function processIncomingMessage(message) {
           
           return { success: true, action: 'booking_flow_started' };
         } else if (listItemId === 'my_bookings') {
-          // Handle my bookings selection (to be implemented)
+          console.log('📋 User requested to view their bookings');
+          
+          // Update flow state directly
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET screen = ? WHERE id = ?',
+              ['my_bookings', flowState.id]
+            );
+          }
+          
+          // Send message about bookings feature
+          await sendTextMessage(from, "You can view your upcoming bookings here. This feature is coming soon!");
+          
+          // Return to main menu after a delay
+          setTimeout(async () => {
+            const language = flowState ? flowState.language || 'english' : 'english';
+            await sendMainMenuMessage(from, language);
+          }, 1000);
+          
           return { success: true, action: 'my_bookings_selected' };
         } else if (listItemId === 'available_slots') {
-          // Handle available slots selection (to be implemented)
+          console.log('🕒 User requested to view available slots');
+          
+          // Update flow state directly
+          if (flowState) {
+            await pool.query(
+              'UPDATE flows_state SET screen = ? WHERE id = ?',
+              ['available_slots', flowState.id]
+            );
+          }
+          
+          // Send message about available slots feature
+          await sendTextMessage(from, "You can check available time slots here. This feature is coming soon!");
+          
+          // Return to main menu after a delay
+          setTimeout(async () => {
+            const language = flowState ? flowState.language || 'english' : 'english';
+            await sendMainMenuMessage(from, language);
+          }, 1000);
+          
           return { success: true, action: 'available_slots_selected' };
         }
       }
@@ -948,20 +998,36 @@ async function sendBookingFlow(phoneNumber) {
     console.log('🔄 Sending booking flow...');
     
     // Generate a unique flow token
-    const flowToken = `booking_${Date.now()}`;
+    const flowToken = `flows-builder-${Date.now().toString(16).slice(-8)}`;
     
     // Save the flow token and phone number in the database for later use
     const FlowsState = require('../models/mysql/FlowsState');
-    const flowState = await FlowsState.findOne({ phoneNumber }).sort({ updatedAt: -1 });
+    const connectToDatabase = require('../utils/mysql-connection.js');
+    const pool = await connectToDatabase();
+    
+    // Find existing flow state
+    const flowState = await FlowsState.findOne({ phoneNumber });
+    
     if (flowState) {
-      flowState.flowToken = flowToken;
-      flowState.screen = 'booking_flow';
-      await flowState.save();
+      await pool.query(
+        'UPDATE flows_state SET flow_token = ?, screen = ? WHERE id = ?',
+        [flowToken, 'booking_flow', flowState.id]
+      );
+      console.log('✅ Flow state updated with new flow token:', flowToken);
+    } else {
+      await FlowsState.create({
+        flowToken: flowToken,
+        phoneNumber: phoneNumber,
+        screen: 'booking_flow',
+        processedMessages: []
+      });
+      console.log('✅ New flow state created with flow token:', flowToken);
     }
     
     // Get flow ID from environment variable or use default
     const flowId = process.env.WHATSAPP_FLOW_ID || '709410911435764';
     
+    // Updated flow message structure based on the working payload format
     const flowMessage = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -974,10 +1040,10 @@ async function sendBookingFlow(phoneNumber) {
           text: 'Sports Booking'
         },
         body: {
-          text: 'Please fill in your booking details'
+          text: 'Please fill in your booking details to reserve your spot at PitZone Sports Facility'
         },
         footer: {
-          text: 'Complete the form to proceed'
+          text: 'Complete the form to proceed with your booking'
         },
         action: {
           name: 'flow',
@@ -986,24 +1052,35 @@ async function sendBookingFlow(phoneNumber) {
             flow_token: flowToken,
             flow_id: flowId,
             flow_cta: 'Book Now',
-            flow_action: 'INIT',
-            flow_action_payload: {
-              screen: 'BOOKING',
-              data: {
-                flow_token: flowToken,
-                phone_number: phoneNumber
-              }
-            }
+            flow_action: 'data_exchange',
+            mode: 'draft'
           }
         }
       }
     };
     
+    console.log('📤 Sending flow message with token:', flowToken);
+    console.log('📤 Flow message payload:', JSON.stringify(flowMessage, null, 2));
+    
     const response = await whatsappService.sendRawMessage(flowMessage);
-    console.log('✅ Booking flow sent successfully');
+    console.log('✅ Booking flow message sent successfully');
     return response;
   } catch (error) {
     console.error('❌ Error sending booking flow:', error);
+    
+    // Log the actual error response
+    if (error.response) {
+      console.error('Error response data:', JSON.stringify(error.response.data, null, 2));
+      console.error('Error response status:', error.response.status);
+    }
+    
+    // Send fallback message if flow fails
+    try {
+      await sendTextMessage(phoneNumber, "We're having trouble with our booking system right now. Please try again later or contact us directly.");
+      console.log('✅ Sent fallback message due to flow error');
+    } catch (fallbackError) {
+      console.error('❌ Critical error sending fallback message:', fallbackError);
+    }
     throw error;
   }
 }

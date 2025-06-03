@@ -260,17 +260,23 @@ const getNextScreen = async (decryptedBody) => {
       if (data && data.phone_number) {
         phoneNumber = data.phone_number;
         console.log('📱 Phone number found in data payload:', phoneNumber);
+      } else {
+        console.log('⚠️ No phone number in data payload, using default flow');
       }
       
       // Format sports for Dropdown with dynamic data
-      const formattedSports = sportsFacilities.map(sport => ({
-        id: sport.id,
-        title: sport.title,
-        image: sport.imageUrl || (sport.id === 'badminton' ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' : 
-               sport.id === 'cricket' ? 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' : 
-              'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='),
-        description: sport.description || `${sport.title} court`,
-        metadata: `₹${sport.baseRate}/hr`
+      const formattedSports = await Promise.all(sportsFacilities.map(async sport => {
+        // Get sport configuration for pricing info
+        const sportConfig = await flowDbUtils.getSportConfig(sport.id);
+        const baseRate = sportConfig.baseRate || 400;
+        
+        return {
+          id: sport.id,
+          title: sport.title,
+          image: sport.imageUrl || 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+          description: sport.description || `${sport.title} court`,
+          metadata: `₹${baseRate}/hr`
+        };
       }));
   
       // Get sport configuration for the first sport to set up durations with dynamic discounts

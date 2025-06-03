@@ -41,6 +41,9 @@ app.get('/', (req, res) => {
   res.send('Sports Booking API - MySQL Version');
 });
 
+// WhatsApp Flow handler route
+app.post("/", WhatsAppFlowsController.handleFlowRequest);
+
 // Configure routes
 app.use('/api/available-slots', availableSlotsRoutes);
 app.use('/api/bookings', bookingRoutes);
@@ -54,7 +57,7 @@ app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Something went wrong!' });
 });
-app.post("/", WhatsAppFlowsController.handleFlowRequest);
+
 // Start server
 const PORT = process.env.PORT || 3000;
 
