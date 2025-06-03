@@ -1160,6 +1160,35 @@ async function sendTextMessage(phoneNumber, text) {
   }
 }
 
+/**
+ * Sends a button message
+ * @param {string} phoneNumber - Recipient's phone number
+ * @param {string} headerText - Header text
+ * @param {string} bodyText - Body text
+ * @param {string} footerText - Footer text
+ * @param {Array} buttons - Array of button objects
+ * @returns {Promise<Object>} - API response
+ */
+async function sendButtonMessage(phoneNumber, headerText, bodyText, footerText, buttons) {
+  try {
+    console.log('📤 Sending button message...');
+    
+    const response = await whatsappService.sendButtonMessage(
+      phoneNumber, 
+      headerText, 
+      bodyText, 
+      footerText, 
+      buttons
+    );
+    
+    console.log('✅ Button message sent successfully');
+    return response;
+  } catch (error) {
+    console.error('❌ Error sending button message:', error);
+    throw error;
+  }
+}
+
 // Make sure to export the function at the end of the file
 module.exports = {
   sendWelcomeMessage,
@@ -1175,5 +1204,6 @@ module.exports = {
   sendMainMenuMessage,
   sendBookingFlow,
   handleFlowCompletion,
-  sendTextMessage
+  sendTextMessage,
+  sendButtonMessage
 };

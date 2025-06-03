@@ -154,7 +154,8 @@ The sports booking application now uses a WhatsApp Flow for the booking process,
 ### Flow ID and Configuration
 
 - WhatsApp Flow ID: 709410911435764
-- Payment Configuration ID: 1750678955481520
+- Razorpay Payment Configuration Name: pitzone_razorpay
+- UPI Payment Configuration Name: PitZone_Upi
 - Razorpay Merchant ID: acc_PX637rs8HXQBWa
 
 ### API Endpoints
@@ -231,19 +232,41 @@ The sports booking application now uses a WhatsApp Flow for the booking process,
       "text": "Click below to pay"
     },
     "action": {
-      "name": "pay",
+      "name": "review_and_pay",
       "parameters": {
-        "payment_configuration_id": "1750678955481520",
-        "payment_type": "UPI",
-        "payment_gateway": "upi",
-        "customer_email": "customer@example.com",
-        "customer_name": "John Doe",
-        "booking_ref": "BK123456789",
-        "transaction_amount": {
-          "amount": "500",
-          "currency": "INR"
+        "reference_id": "BK123456789",
+        "type": "digital-goods",
+        "payment_settings": [
+          {
+            "type": "payment_gateway",
+            "payment_gateway": {
+              "type": "razorpay",
+              "configuration_name": "PitZone_Upi"
+            }
+          }
+        ],
+        "currency": "INR",
+        "total_amount": {
+          "value": 50000,
+          "offset": 100
         },
-        "payment_link": "upi://pay?pa=pitzone@ybl&pn=PitZone%20Sports&tr=BK123456789&am=500&cu=INR&tn=Booking%20for%20John%20Doe"
+        "order": {
+          "status": "pending",
+          "items": [
+            {
+              "name": "Sports Booking",
+              "amount": {
+                "value": 50000,
+                "offset": 100
+              },
+              "quantity": 1
+            }
+          ],
+          "subtotal": {
+            "value": 50000,
+            "offset": 100
+          }
+        }
       }
     }
   }

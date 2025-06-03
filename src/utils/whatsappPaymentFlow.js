@@ -1,15 +1,40 @@
 /**
- * WhatsApp Payment Flow
- * Handles payment flow after the WhatsApp Flow is completed
+ * WhatsApp Payment Flow Utilities
+ * Utilities for creating payment messages in WhatsApp
  */
 
 /**
- * Creates a payment options message with UPI and Razorpay options
- * @param {string} to - Recipient's phone number
- * @param {Object} bookingData - Booking data from flow completion
- * @returns {Object} - Interactive payment options message
+ * Create a payment options message with multiple payment methods
+ * @param {string} to - Phone number to send message to
+ * @param {Object} bookingData - Booking data
+ * @returns {Object} - Message object
  */
 function createPaymentOptionsMessage(to, bookingData) {
+  const {
+    booking_id,
+    sport,
+    date,
+    time_slot,
+    total_amount,
+    name,
+    duration
+  } = bookingData;
+
+  // Format date for display
+  const formattedDate = new Date(date).toLocaleDateString('en-IN', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  // Create a unique reference ID based on booking ID
+  const referenceId = booking_id || `BOOKING_${Date.now()}`;
+  
+  // Format time slot
+  const timeStart = time_slot;
+  const timeEnd = calculateEndTime(time_slot, duration || 1);
+
   return {
     messaging_product: "whatsapp",
     recipient_type: "individual",
@@ -19,13 +44,13 @@ function createPaymentOptionsMessage(to, bookingData) {
       type: "button",
       header: {
         type: "text",
-        text: "Payment Options"
+        text: "Payment Options 💸"
       },
       body: {
-        text: `Please select your payment method for your ${bookingData.sport} booking on ${bookingData.date} at ${bookingData.time_slot}.\n\nAmount: ₹${bookingData.total_amount}`
+        text: `Thank you for booking a ${sport || 'sports'} court on ${formattedDate} from ${timeStart} to ${timeEnd}.\n\nPlease select your preferred payment method to complete your booking.`
       },
       footer: {
-        text: "Secure payment options"
+        text: `Booking ID: ${referenceId} | Amount: ₹${total_amount || '0'}`
       },
       action: {
         buttons: [
@@ -33,14 +58,14 @@ function createPaymentOptionsMessage(to, bookingData) {
             type: "reply",
             reply: {
               id: "pay_upi",
-              title: "Pay with UPI"
+              title: "UPI"
             }
           },
           {
             type: "reply",
             reply: {
               id: "pay_razorpay",
-              title: "Pay with Razorpay"
+              title: "Card/Net Banking"
             }
           }
         ]
@@ -50,15 +75,25 @@ function createPaymentOptionsMessage(to, bookingData) {
 }
 
 /**
- * Creates a payment message with UPI link
- * @param {string} to - Recipient's phone number
+ * Create a UPI payment message
+ * @param {string} to - Phone number to send message to
  * @param {Object} bookingData - Booking data
- * @param {string} upiLink - Generated UPI payment link
- * @returns {Object} - UPI payment message
+ * @param {string} upiLink - UPI payment link
+ * @returns {Object} - Message object
  */
 function createUpiPaymentMessage(to, bookingData, upiLink) {
-  // Get payment configuration from environment variables
-  const paymentConfigId = process.env.WHATSAPP_PAYMENT_CONFIGURATION_ID || '1750678955481520';
+  const {
+    id,
+    booking_id,
+    sport,
+    date,
+    start_time,
+    amount,
+    customer_name
+  } = bookingData;
+
+  // Create a unique reference ID based on booking ID - ensure it's a string
+  const referenceId = (booking_id || id || `UPI_${Date.now()}`).toString();
   
   return {
     messaging_product: "whatsapp",
@@ -72,25 +107,24 @@ function createUpiPaymentMessage(to, bookingData, upiLink) {
         text: "UPI Payment"
       },
       body: {
-        text: `Please complete your payment of ₹${bookingData.total_amount} using the UPI link below.`
+        text: `Please complete your payment for ${sport || 'sports'} booking on ${date} at ${start_time}. Click Pay to proceed with UPI payment.`
       },
       footer: {
-        text: "Click below to pay"
+        text: `Booking ID: ${referenceId}`
       },
       action: {
         name: "pay",
         parameters: {
-          payment_configuration_id: paymentConfigId,
+          reference_id: referenceId,
+          payment_configuration_name: "PitZone_Upi",
           payment_type: "UPI",
-          payment_gateway: "upi",
-          customer_email: bookingData.email,
-          customer_name: bookingData.name,
-          booking_ref: bookingData.booking_id || "BK" + Date.now(),
-          transaction_amount: {
-            amount: bookingData.total_amount,
-            currency: "INR"
+          amount: {
+            value: (amount || 0) * 100,
+            offset: 100
           },
-          payment_link: upiLink
+          upi: {
+            target_url: upiLink
+          }
         }
       }
     }
@@ -98,16 +132,25 @@ function createUpiPaymentMessage(to, bookingData, upiLink) {
 }
 
 /**
- * Creates a payment message with Razorpay gateway
- * @param {string} to - Recipient's phone number
+ * Create a Razorpay payment message
+ * @param {string} to - Phone number to send message to
  * @param {Object} bookingData - Booking data
  * @param {string} orderId - Razorpay order ID
- * @returns {Object} - Razorpay payment message
+ * @returns {Object} - Message object
  */
 function createRazorpayPaymentMessage(to, bookingData, orderId) {
-  // Get payment configuration from environment variables
-  const paymentConfigId = process.env.WHATSAPP_PAYMENT_CONFIGURATION_ID || '1750678955481520';
-  const razorpayMerchantId = process.env.RAZORPAY_MERCHANT_ID || 'acc_PX637rs8HXQBWa';
+  const {
+    id,
+    booking_id,
+    sport,
+    date,
+    start_time,
+    amount,
+    customer_name
+  } = bookingData;
+
+  // Create a unique reference ID based on booking ID - ensure it's a string
+  const referenceId = (booking_id || id || `RZP_${Date.now()}`).toString();
   
   return {
     messaging_product: "whatsapp",
@@ -118,71 +161,64 @@ function createRazorpayPaymentMessage(to, bookingData, orderId) {
       type: "order_details",
       header: {
         type: "text",
-        text: "Card/Net Banking Payment"
+        text: "Complete Payment"
       },
       body: {
-        text: `Please complete your payment of ₹${bookingData.total_amount} using Razorpay secure gateway.`
+        text: `Please complete your payment for ${sport || 'sports'} booking on ${date} at ${start_time}.`
       },
       footer: {
-        text: "Click below to pay"
+        text: `Booking ID: ${referenceId}`
       },
       action: {
-        name: "pay",
+        name: "review_and_pay",
         parameters: {
-          payment_configuration_id: paymentConfigId,
-          payment_type: "RAZORPAY",
-          payment_gateway: "razorpay",
-          payment_gateway_merchant_id: razorpayMerchantId,
-          customer_email: bookingData.email,
-          customer_name: bookingData.name,
-          booking_ref: bookingData.booking_id || "BK" + Date.now(),
-          transaction_amount: {
-            amount: bookingData.total_amount,
-            currency: "INR"
+          reference_id: referenceId,
+          type: "digital-goods",
+          payment_settings: [
+            {
+              type: "payment_gateway",
+              payment_gateway: {
+                type: "razorpay",
+                configuration_name: "pitzone_razorpay",
+                razorpay: {
+                  receipt: referenceId,
+                  notes: {
+                    booking_id: String(booking_id || id || ''),
+                    order_id: orderId,
+                    date: date || '',
+                    time: start_time || '',
+                    customer_name: customer_name || ''
+                  }
+                }
+              }
+            }
+          ],
+          currency: "INR",
+          total_amount: {
+            value: (amount || 0) * 100,
+            offset: 100
           },
-          merchant_order_id: orderId
-        }
-      }
-    }
-  };
-}
-
-/**
- * Creates a WhatsApp Flow message
- * @param {string} to - Recipient's phone number
- * @param {string} flowId - WhatsApp Flow ID
- * @param {Object} data - Initial data for the flow
- * @returns {Object} - Flow message object
- */
-function createFlowMessage(to, flowId, data = {}) {
-  return {
-    messaging_product: "whatsapp",
-    to: to,
-    recipient_type: "individual",
-    type: "interactive",
-    interactive: {
-      type: "flow",
-      header: {
-        type: "text",
-        text: "Book Your Sports Session"
-      },
-      body: {
-        text: "Welcome to PitZone Sports Booking. Complete the form to book your sports session."
-      },
-      footer: {
-        text: "PitZone Sports"
-      },
-      action: {
-        name: "flow",
-        parameters: {
-          flow_message_version: "3",
-          flow_action: "navigate",
-          flow_token: "booking_" + Date.now(),
-          flow_id: flowId,
-          flow_cta: "Book Now",
-          flow_action_payload: {
-            screen: "BOOKING",
-            data: data
+          order: {
+            status: "pending",
+            items: [
+              {
+                name: `${sport || 'Sports'} Court Booking`,
+                amount: {
+                  value: (amount || 0) * 100,
+                  offset: 100
+                },
+                quantity: 1
+              }
+            ],
+            subtotal: {
+              value: (amount || 0) * 100,
+              offset: 100
+            },
+            tax: {
+              value: 0,
+              offset: 100,
+              description: "No tax"
+            }
           }
         }
       }
@@ -190,9 +226,38 @@ function createFlowMessage(to, flowId, data = {}) {
   };
 }
 
+/**
+ * Calculate end time based on start time and duration
+ * @param {string} startTime - Start time (HH:MM format)
+ * @param {number} durationHours - Duration in hours
+ * @returns {string} - End time (HH:MM format)
+ */
+function calculateEndTime(startTime, durationHours) {
+  try {
+    // Parse start time
+    const [hours, minutes] = startTime.split(':').map(Number);
+    
+    // Create date object with today's date and start time
+    const date = new Date();
+    date.setHours(hours, minutes, 0, 0);
+    
+    // Add duration
+    date.setTime(date.getTime() + (durationHours * 60 * 60 * 1000));
+    
+    // Format end time
+    const endHours = date.getHours().toString().padStart(2, '0');
+    const endMinutes = date.getMinutes().toString().padStart(2, '0');
+    
+    return `${endHours}:${endMinutes}`;
+  } catch (error) {
+    console.error('Error calculating end time:', error);
+    return startTime; // Return start time as fallback
+  }
+}
+
 module.exports = {
   createPaymentOptionsMessage,
   createUpiPaymentMessage,
   createRazorpayPaymentMessage,
-  createFlowMessage
+  calculateEndTime
 }; 

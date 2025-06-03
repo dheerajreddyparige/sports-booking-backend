@@ -69,9 +69,27 @@ class Customer {
       params.push(filter.customerId);
     }
     
-    if (filter.phoneNumber) {
-      query += ' AND phone_number = ?';
-      params.push(filter.phoneNumber);
+    // Handle both phone and phoneNumber fields in filter for compatibility
+    if (filter.phoneNumber || filter.phone) {
+      const phoneValue = filter.phoneNumber || filter.phone;
+      try {
+        // First try with phone_number column
+        query += ' AND phone_number = ?';
+        params.push(phoneValue);
+      } catch (error) {
+        // If that fails, try with phone column
+        console.log('Falling back to phone column...');
+        query = 'SELECT * FROM customers WHERE 1=1';
+        params.length = 0; // Clear params
+        
+        if (filter.customerId) {
+          query += ' AND customer_id = ?';
+          params.push(filter.customerId);
+        }
+        
+        query += ' AND phone = ?';
+        params.push(phoneValue);
+      }
     }
     
     if (filter.whatsappId) {
@@ -96,13 +114,35 @@ class Customer {
     
     query += ' LIMIT 1';
     
-    const [rows] = await pool.query(query, params);
-    
-    if (rows.length === 0) {
+    try {
+      const [rows] = await pool.query(query, params);
+      
+      if (rows.length === 0) {
+        return null;
+      }
+      
+      return this._transformDbRowToModel(rows[0]);
+    } catch (error) {
+      // If the query fails due to a column issue, try an alternative approach
+      if (error.code === 'ER_BAD_FIELD_ERROR' && (filter.phoneNumber || filter.phone)) {
+        // If this was a phone_number/phone column error, try with the other column name
+        console.log('Column error in findOne, attempting alternative query');
+        const phoneValue = filter.phoneNumber || filter.phone;
+        const altQuery = `SELECT * FROM customers WHERE ${error.message.includes('phone_number') ? 'phone' : 'phone_number'} = ? LIMIT 1`;
+        try {
+          const [altRows] = await pool.query(altQuery, [phoneValue]);
+          if (altRows.length === 0) {
+            return null;
+          }
+          return this._transformDbRowToModel(altRows[0]);
+        } catch (altError) {
+          console.error('Alternative query also failed:', altError);
+          return null;
+        }
+      }
+      console.error('Error in findOne:', error);
       return null;
     }
-    
-    return this._transformDbRowToModel(rows[0]);
   }
   
   /**
@@ -318,6 +358,91 @@ class Customer {
       updatedAt: row.updated_at,
       lastActivity: row.last_activity
     };
+  }
+  
+  /**
+   * Find a customer and update it, or create if not found (upsert)
+   * @param {Object} filter - Filter criteria
+   * @param {Object} updateData - Data to update
+   * @param {Object} options - Options for the operation
+   * @returns {Promise<Object>} Updated customer object
+   */
+  static async findOneAndUpdate(filter, updateData, options = {}) {
+    const pool = await connectToDatabase();
+    
+    // Find the customer first
+    const customer = await this.findOne(filter);
+    
+    if (customer) {
+      // Customer exists, update it
+      const updates = [];
+      const params = [];
+      
+      // Handle $set operator (MongoDB style compatibility)
+      const dataToUpdate = updateData.$set || updateData;
+      
+      // Map JavaScript model fields to database fields
+      const fieldMap = {
+        customerId: 'customer_id',
+        firstName: 'first_name',
+        lastName: 'last_name',
+        phoneNumber: 'phone_number',
+        phone: 'phone_number',
+        email: 'email',
+        whatsappId: 'whatsapp_id',
+        isActive: 'is_active',
+        isVerified: 'is_verified',
+        lastActive: 'last_activity',
+        lastLogin: 'last_login',
+        loginCount: 'login_count',
+        accountStatus: 'account_status'
+      };
+      
+      // Prepare update statements
+      for (const [jsField, value] of Object.entries(dataToUpdate)) {
+        if (value !== undefined) {
+          const dbField = fieldMap[jsField];
+          if (dbField) {
+            updates.push(`${dbField} = ?`);
+            params.push(value);
+          }
+        }
+      }
+      
+      // Handle $inc operator (MongoDB style compatibility)
+      if (updateData.$inc) {
+        for (const [jsField, value] of Object.entries(updateData.$inc)) {
+          const dbField = fieldMap[jsField];
+          if (dbField) {
+            updates.push(`${dbField} = ${dbField} + ?`);
+            params.push(value);
+          }
+        }
+      }
+      
+      // If there are fields to update
+      if (updates.length > 0) {
+        // Add the customer ID to the parameters
+        params.push(customer.id);
+        
+        // Execute the update
+        await pool.query(
+          `UPDATE customers SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+          params
+        );
+        
+        // Return the updated customer
+        return await this.findById(customer.id);
+      }
+      
+      return customer;
+    } else if (options.upsert) {
+      // Customer doesn't exist and upsert is true, create a new one
+      const dataToInsert = updateData.$set || updateData;
+      return await this.create(dataToInsert);
+    }
+    
+    return null;
   }
 }
 

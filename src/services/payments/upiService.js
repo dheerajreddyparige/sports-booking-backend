@@ -1,66 +1,100 @@
 /**
  * UPI Payment Service
- * Service for generating UPI payment links
+ * Handles UPI payment link generation and verification
  */
 
 /**
- * Generate UPI payment link
- * @param {Object} options - Payment options
- * @param {number} options.amount - Payment amount
- * @param {string} options.bookingId - Booking ID for reference
- * @param {string} options.customerName - Customer name
- * @returns {Promise<string>} - UPI payment link
+ * Generate a UPI payment link
+ * @param {Object} bookingData - Booking data
+ * @returns {string} - UPI payment link
  */
-async function generateUpiLink(options) {
+function generateUpiLink(bookingData) {
   try {
-    const { amount, bookingId, customerName } = options;
+    console.log('Generating UPI link for booking:', bookingData);
     
-    // UPI merchant VPA from environment variable or use default
-    const merchantVPA = process.env.UPI_MERCHANT_VPA || 'pitzone@ybl';
-    
-    // Merchant name from environment variable or use default
+    // Get UPI configuration from environment variables
+    const merchantVpa = process.env.UPI_MERCHANT_VPA || 'yourmerchant@ybl';
     const merchantName = process.env.UPI_MERCHANT_NAME || 'PitZone Sports';
     
-    // Create UPI link with standard format
-    // Format: upi://pay?pa=MERCHANT_VPA&pn=MERCHANT_NAME&tr=REFERENCE_ID&am=AMOUNT&cu=CURRENCY&tn=TRANSACTION_NOTE
-    const upiLink = `upi://pay?pa=${encodeURIComponent(merchantVPA)}&pn=${encodeURIComponent(merchantName)}&tr=${encodeURIComponent(bookingId)}&am=${amount}&cu=INR&tn=${encodeURIComponent(`Booking for ${customerName}`)}`;
+    // Format amount properly (ensure it's a number)
+    const amount = parseFloat(bookingData.total_amount || 800).toFixed(2);
     
-    console.log('Generated UPI link:', upiLink);
+    // Create a unique transaction reference ID
+    const transactionRef = bookingData.booking_id || `BK${Date.now()}`;
+    
+    // Create UPI payment link
+    const upiLink = `upi://pay?pa=${encodeURIComponent(merchantVpa)}`
+      + `&pn=${encodeURIComponent(merchantName)}`
+      + `&tr=${encodeURIComponent(transactionRef)}`
+      + `&am=${encodeURIComponent(amount)}`
+      + `&cu=INR`
+      + `&tn=${encodeURIComponent(`Sports booking for ${bookingData.sport} on ${bookingData.date} at ${bookingData.time_slot}`)}`
+      + `&mc=5399`  // Merchant Category Code for Sports and Recreation
+      + `&mode=00`  // Default mode
+      + `&purpose=00`; // Default purpose code
+    
+    console.log('UPI link generated successfully:', upiLink);
     return upiLink;
   } catch (error) {
     console.error('Error generating UPI link:', error);
-    throw error;
+    throw new Error(`Failed to generate UPI link: ${error.message}`);
   }
 }
 
 /**
- * Validate UPI payment status
- * @param {string} referenceId - Reference ID (booking ID)
- * @returns {Promise<Object>} - Payment status
+ * Extract transaction reference from UPI link
+ * @param {string} upiLink - UPI payment link
+ * @returns {string|null} - Transaction reference or null if not found
  */
-async function validateUpiPayment(referenceId) {
+function extractTransactionReference(upiLink) {
   try {
-    // In a real implementation, this would make an API call to a UPI payment gateway
-    // For now, we'll simulate a successful payment
+    if (!upiLink) return null;
     
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Extract tr parameter from UPI link
+    const trMatch = upiLink.match(/tr=([^&]+)/);
+    if (trMatch && trMatch[1]) {
+      return decodeURIComponent(trMatch[1]);
+    }
     
-    // Return simulated payment status
+    return null;
+  } catch (error) {
+    console.error('Error extracting transaction reference:', error);
+    return null;
+  }
+}
+
+/**
+ * Verify UPI transaction status
+ * Note: This is a placeholder function. In a real implementation, 
+ * you would need to integrate with your payment gateway's API
+ * to verify the transaction status.
+ * 
+ * @param {string} transactionRef - Transaction reference
+ * @returns {Promise<Object>} - Transaction status
+ */
+async function verifyUpiTransaction(transactionRef) {
+  try {
+    console.log('Verifying UPI transaction:', transactionRef);
+    
+    // This is where you would integrate with your payment gateway's API
+    // to check the status of the UPI transaction
+    
+    // For now, we'll return a mock successful response
     return {
-      referenceId,
+      transactionRef,
       status: 'success',
-      timestamp: new Date().toISOString(),
-      paymentId: 'UPI' + Date.now(),
-      message: 'Payment successful'
+      amount: '800.00',
+      currency: 'INR',
+      timestamp: new Date().toISOString()
     };
   } catch (error) {
-    console.error('Error validating UPI payment:', error);
-    throw error;
+    console.error('Error verifying UPI transaction:', error);
+    throw new Error(`Failed to verify UPI transaction: ${error.message}`);
   }
 }
 
 module.exports = {
   generateUpiLink,
-  validateUpiPayment
+  extractTransactionReference,
+  verifyUpiTransaction
 }; 

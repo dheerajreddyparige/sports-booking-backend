@@ -357,32 +357,31 @@ class WhatsAppService {
   async updateCustomerActivity(phoneNumber) {
     try {
       // Find customer by phone number
-      const customer = await Customer.findOne({ phone: phoneNumber });
+      const customer = await Customer.findOne({ phoneNumber });
       
       if (customer) {
         // Update last active timestamp and increment login count
         await Customer.findOneAndUpdate(
-          { _id: customer._id },
+          { id: customer.id },
           {
             $set: {
               lastActive: new Date(),
               lastLogin: new Date()
             },
             $inc: { loginCount: 1 }
-          }
+          },
+          { upsert: false } // Don't create a new record if not found
         );
       } else {
         // Create new customer record
         await Customer.create({
+          phoneNumber,
           phone: phoneNumber,
           customerId: `CUST${Date.now()}`,
           lastActive: new Date(),
           lastLogin: new Date(),
           loginCount: 1,
-          accountStatus: 'active',
-          verification: {
-            phone: true
-          }
+          accountStatus: 'active'
         });
       }
     } catch (error) {

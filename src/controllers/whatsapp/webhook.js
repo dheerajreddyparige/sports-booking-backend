@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { FlowEndpointException } = require('../../utils/encryption');
 const FlowsState = require('../../models/mysql/FlowsState.js');
 const whatsappMessaging = require('../../services/whatsappMessaging');
+const whatsappService = require('../../services/whatsapp');
 const connectToDatabase = require('../../utils/mysql-connection');
 
 /**
@@ -281,29 +282,80 @@ class WhatsAppWebhookController {
         if (buttonId === 'pay_upi' || buttonId === 'pay_razorpay') {
           console.log(`💳 User selected payment method: ${buttonId}`);
           
-          // Find the latest pending booking for this user
-          const bookingService = require('../../services/bookingService');
-          const latestBooking = await bookingService.getLatestPendingBookingByPhone(from);
-          
-          if (!latestBooking) {
-            console.log('❌ No pending booking found for this user');
-            await whatsappMessaging.sendTextMessage(from, 'Sorry, we could not find a pending booking for you. Please try booking again.');
-            return;
+          try {
+            // Find the latest pending booking for this user
+            const bookingService = require('../../services/bookingService');
+            const latestBooking = await bookingService.getLatestPendingBookingByPhone(from);
+            
+            if (!latestBooking) {
+              console.log('❌ No pending booking found for this user');
+              await whatsappMessaging.sendTextMessage(from, 'Sorry, we could not find a pending booking for you. Please try booking again.');
+              return;
+            }
+            
+            // Format phone number if needed
+            let formattedPhone = from;
+            if (formattedPhone.length === 10) {
+              formattedPhone = '91' + formattedPhone;
+            } else if (formattedPhone.startsWith('0')) {
+              formattedPhone = '91' + formattedPhone.substring(1);
+            } else if (!formattedPhone.startsWith('91')) {
+              formattedPhone = '91' + formattedPhone;
+            }
+            
+            // Process payment based on selected method
+            if (buttonId === 'pay_upi') {
+              // Get UPI service and payment flow utilities
+              const { generateUpiLink } = require('../../services/payments/upiService');
+              const { createUpiPaymentMessage } = require('../../utils/whatsappPaymentFlow');
+              
+              // Generate UPI link
+              const upiLink = generateUpiLink(latestBooking);
+              
+              // Create and send UPI payment message
+              // Ensure latestBooking has string IDs
+              const bookingWithStringId = {
+                ...latestBooking,
+                id: String(latestBooking.id),
+                booking_id: latestBooking.booking_id ? String(latestBooking.booking_id) : String(latestBooking.id)
+              };
+              
+              const upiPaymentMessage = createUpiPaymentMessage(formattedPhone, bookingWithStringId, upiLink);
+              await whatsappService.sendRawMessage(upiPaymentMessage);
+              
+              console.log('✅ UPI payment message sent successfully');
+            } else if (buttonId === 'pay_razorpay') {
+              // Get Razorpay service and payment flow utilities
+              const { createRazorpayOrder } = require('../../services/payments/razorpayService');
+              const { createRazorpayPaymentMessage } = require('../../utils/whatsappPaymentFlow');
+              
+              // Create Razorpay order
+              const order = await createRazorpayOrder(latestBooking);
+              
+              // Update booking with order ID
+              await bookingService.updateBooking(latestBooking.id, { 
+                razorpay_order_id: order.id,
+                transaction_id: order.id 
+              });
+              
+              // Create and send Razorpay payment message
+              // Ensure latestBooking has string IDs
+              const bookingWithStringId = {
+                ...latestBooking,
+                id: String(latestBooking.id),
+                booking_id: latestBooking.booking_id ? String(latestBooking.booking_id) : String(latestBooking.id)
+              };
+              
+              const razorpayPaymentMessage = createRazorpayPaymentMessage(formattedPhone, bookingWithStringId, order.id);
+              await whatsappService.sendRawMessage(razorpayPaymentMessage);
+              
+              console.log('✅ Razorpay payment message sent successfully');
+            }
+          } catch (error) {
+            console.error('❌ Error processing payment selection:', error);
+            await whatsappMessaging.sendTextMessage(from, 'Sorry, we encountered an error processing your payment request. Please try again later.');
           }
           
-          // Process payment based on selected method
-          const handleFlowCompletion = require('./payments/handleFlowCompletion');
-          if (buttonId === 'pay_upi') {
-            await handleFlowCompletion.processUpiPayment({
-              body: { to: from, booking_id: latestBooking.booking_id }
-            }, { status: () => ({ json: () => {} }) });
-          } else if (buttonId === 'pay_razorpay') {
-            await handleFlowCompletion.processRazorpayPayment({
-              body: { to: from, booking_id: latestBooking.booking_id }
-            }, { status: () => ({ json: () => {} }) });
-          }
-          
-          console.log('✅ Payment processing initiated');
           return;
         }
         
@@ -361,6 +413,151 @@ class WhatsAppWebhookController {
         // Process other list replies
         await whatsappMessaging.processIncomingMessage(message);
       } 
+      else if (interactiveType === 'nfm_reply') {
+        // Handle WhatsApp Flow response
+        console.log('📋 Received WhatsApp Flow response');
+        
+        // Parse the response JSON
+        try {
+          const responseData = interactive.nfm_reply.response_json 
+            ? JSON.parse(interactive.nfm_reply.response_json) 
+            : {};
+          
+          console.log('📋 Flow response data:', responseData);
+          
+          // Check if this is a flow completion with booking data
+          if (responseData.flow_token) {
+            console.log('✅ Flow completed with booking ID:', responseData.booking_id || 'Not provided');
+            
+            try {
+              // Get booking ID or generate a new one if not provided
+              const bookingId = responseData.booking_id || ('BK' + Date.now());
+              
+              // Try to get booking details from database
+              const bookingService = require('../../services/bookingService');
+              let booking = null;
+              
+              // Only try to fetch existing booking if booking_id is provided
+              if (responseData.booking_id) {
+                booking = await bookingService.getBookingById(responseData.booking_id);
+              }
+              
+              // Get flow state data
+              const FlowsState = require('../../models/mysql/FlowsState');
+              const flowState = await FlowsState.findOne({ flowToken: responseData.flow_token });
+              
+              if (!flowState) {
+                console.log('⚠️ No flow state found for token:', responseData.flow_token);
+              } else {
+                console.log('✅ Flow state found:', flowState);
+              }
+              
+              // Extract data from either booking, flow state, or response data
+              // Use nullish coalescing to provide fallbacks for undefined values
+              const sport = responseData.sport ?? booking?.sport ?? flowState?.sport ?? 'badminton';
+              const date = responseData.date ?? booking?.date ?? flowState?.date ?? new Date().toISOString().split('T')[0];
+              const timeSlot = responseData.time_slot ?? booking?.start_time ?? flowState?.timeSlot ?? flowState?.time_slot ?? '17:00';
+              const totalAmount = responseData.total_amount ?? booking?.amount ?? flowState?.totalAmount ?? flowState?.total_amount ?? '800';
+              const customerName = responseData.name ?? booking?.customer_name ?? flowState?.name ?? null;
+              const customerEmail = responseData.email ?? booking?.customer_email ?? flowState?.email ?? null;
+              
+              // Format phone number if needed
+              let formattedPhone = from;
+              if (formattedPhone.length === 10) {
+                formattedPhone = '91' + formattedPhone;
+              } else if (formattedPhone.startsWith('0')) {
+                formattedPhone = '91' + formattedPhone.substring(1);
+              } else if (!formattedPhone.startsWith('91')) {
+                formattedPhone = '91' + formattedPhone;
+              }
+              
+              // Update the phone number in flow state if it exists
+              if (flowState) {
+                try {
+                  const pool = await connectToDatabase();
+                  await pool.query(
+                    'UPDATE flows_state SET phone_number = ? WHERE flow_token = ?',
+                    [from, responseData.flow_token]
+                  );
+                  console.log(`✅ Updated flow state with phone number: ${from}`);
+                } catch (dbError) {
+                  console.error('❌ Error updating flow state:', dbError);
+                  // Continue execution even if this fails
+                }
+              }
+              
+              // Create a temporary booking if it doesn't exist
+              if (!booking) {
+                const newBookingData = {
+                  booking_id: bookingId,
+                  sport: sport,
+                  date: date,
+                  time_slot: timeSlot,
+                  duration: responseData.duration ?? flowState?.duration ?? 1,
+                  total_amount: totalAmount,
+                  name: customerName,
+                  email: customerEmail,
+                  phone: formattedPhone,
+                  status: 'pending',
+                  payment_status: 'pending',
+                  flow_token: responseData.flow_token
+                };
+                
+                console.log('📝 Creating new temporary booking with data:', JSON.stringify(newBookingData));
+                
+                try {
+                  const createdBooking = await bookingService.createTemporaryBooking(newBookingData);
+                  console.log('✅ Created temporary booking:', createdBooking);
+                  booking = createdBooking;
+                } catch (bookingError) {
+                  console.error('❌ Error creating temporary booking:', bookingError);
+                  // Continue execution to still try sending payment options
+                }
+              }
+              
+              // Send payment options using WhatsApp Payment API
+              console.log('📤 Sending payment options message using WhatsApp Payment API...');
+              
+              // Import the payment flow utilities
+              const { createPaymentOptionsMessage } = require('../../utils/whatsappPaymentFlow');
+              
+              // Create the booking data object
+              const bookingData = {
+                booking_id: bookingId,
+                sport: sport,
+                date: date,
+                time_slot: timeSlot,
+                total_amount: totalAmount,
+                name: customerName,
+                email: customerEmail,
+                phone: formattedPhone,
+                duration: responseData.duration ?? flowState?.duration ?? 1
+              };
+              
+              console.log('📋 Payment message data:', JSON.stringify(bookingData));
+              
+              // Create and send payment options message
+              const paymentOptionsMessage = createPaymentOptionsMessage(formattedPhone, bookingData);
+              
+              // Send message using the WhatsApp service
+              try {
+                const messageResponse = await whatsappService.sendRawMessage(paymentOptionsMessage);
+                console.log('✅ Payment options message sent successfully:', messageResponse);
+              } catch (msgError) {
+                console.error('❌ Error sending payment message:', msgError);
+                console.error('Error details:', msgError.response?.data || msgError.message);
+              }
+              
+            } catch (error) {
+              console.error('❌ Error handling flow completion:', error);
+            }
+            
+            return;
+          }
+        } catch (error) {
+          console.error('❌ Error parsing flow response:', error);
+        }
+      }
       else {
         // Process other interactive types
         await whatsappMessaging.processIncomingMessage(message);

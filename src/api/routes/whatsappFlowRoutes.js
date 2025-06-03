@@ -13,7 +13,7 @@ router.post('/flow-completion', flowController.handleFlowCompletion);
 // Routes for payment processing
 router.post('/payment/upi', flowController.processUpiPayment);
 router.post('/payment/razorpay', flowController.processRazorpayPayment);
-router.post('/payment/status', flowController.handlePaymentStatus);
+router.post('/payment/status', flowController.handlePaymentWebhook);
 
 // Route to send a WhatsApp flow message to a user
 router.post('/send-flow', async (req, res) => {
@@ -29,11 +29,11 @@ router.post('/send-flow', async (req, res) => {
     
     // Import here to avoid circular dependencies
     const { createFlowMessage } = require('../../utils/whatsappPaymentFlow');
-    const { sendWhatsAppMessage } = require('../../services/whatsapp/messageService');
+    const whatsappService = require('../../services/whatsapp');
     
     // Create and send flow message
     const flowMessage = createFlowMessage(to, flowId, data || {});
-    const response = await sendWhatsAppMessage(flowMessage);
+    const response = await whatsappService.sendRawMessage(flowMessage);
     
     res.status(200).json({ 
       success: true, 

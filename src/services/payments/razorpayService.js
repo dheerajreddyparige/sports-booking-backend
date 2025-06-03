@@ -1,135 +1,150 @@
 /**
  * Razorpay Payment Service
- * Service for Razorpay payment integration
+ * Handles Razorpay payment gateway integration
  */
 
-const Razorpay = require('razorpay');
+const axios = require('axios');
+const crypto = require('crypto');
 
-// Initialize Razorpay client
-let razorpayClient = null;
-
-/**
- * Get Razorpay client instance
- * @returns {Object} Razorpay client
- */
-function getRazorpayClient() {
-  if (!razorpayClient) {
-    const key_id = process.env.RAZORPAY_KEY_ID;
-    const key_secret = process.env.RAZORPAY_KEY_SECRET;
-    
-    if (!key_id || !key_secret) {
-      throw new Error('Razorpay API keys not found in environment variables');
-    }
-    
-    razorpayClient = new Razorpay({
-      key_id,
-      key_secret
-    });
-  }
-  
-  return razorpayClient;
-}
+// Razorpay API credentials
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+const RAZORPAY_API_URL = 'https://api.razorpay.com/v1';
 
 /**
  * Create a Razorpay order
- * @param {Object} options - Order options
- * @param {number} options.amount - Amount in smallest currency unit (paise for INR)
- * @param {string} options.currency - Currency code (default: INR)
- * @param {string} options.receipt - Receipt ID (booking ID)
- * @param {Object} options.notes - Additional notes
+ * @param {Object} bookingData - Booking data
  * @returns {Promise<Object>} - Razorpay order object
  */
-async function createRazorpayOrder(options) {
+async function createRazorpayOrder(bookingData) {
   try {
-    const { amount, currency = 'INR', receipt, notes = {} } = options;
+    console.log('Creating Razorpay order for booking:', bookingData);
     
-    // Convert amount to paise if not already (Razorpay expects amount in paise)
-    const amountInPaise = Math.round(amount * 100);
+    // Format amount properly (ensure it's a number and convert to paise)
+    const amount = parseInt(bookingData.total_amount || 800) * 100;
     
-    // Create order
-    const orderOptions = {
-      amount: amountInPaise,
-      currency,
-      receipt,
-      notes
+    // Create a unique receipt ID
+    const receipt = bookingData.booking_id || `BK${Date.now()}`;
+    
+    // Create order payload
+    const orderPayload = {
+      amount: amount,
+      currency: 'INR',
+      receipt: receipt,
+      notes: {
+        booking_id: bookingData.booking_id,
+        sport: bookingData.sport || 'badminton',
+        date: bookingData.date || new Date().toISOString().split('T')[0],
+        time_slot: bookingData.time_slot || '17:00',
+        customer_phone: bookingData.phone
+      }
     };
     
-    const client = getRazorpayClient();
-    const order = await client.orders.create(orderOptions);
+    // Make API request to create order
+    const response = await axios.post(
+      `${RAZORPAY_API_URL}/orders`,
+      orderPayload,
+      {
+        auth: {
+          username: RAZORPAY_KEY_ID,
+          password: RAZORPAY_KEY_SECRET
+        },
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
     
-    console.log('Razorpay order created:', order);
-    return order;
+    console.log('Razorpay order created successfully:', response.data);
+    return response.data;
   } catch (error) {
-    console.error('Error creating Razorpay order:', error);
-    throw error;
+    console.error('Error creating Razorpay order:', error.response?.data || error.message);
+    throw new Error(`Failed to create Razorpay order: ${error.message}`);
   }
 }
 
 /**
- * Verify Razorpay payment
- * @param {Object} options - Payment verification options
- * @param {string} options.razorpay_order_id - Razorpay order ID
- * @param {string} options.razorpay_payment_id - Razorpay payment ID
- * @param {string} options.razorpay_signature - Razorpay signature
- * @returns {boolean} - Whether payment is valid
+ * Verify Razorpay payment signature
+ * @param {Object} paymentData - Payment data from webhook
+ * @returns {boolean} - Whether the signature is valid
  */
-function verifyRazorpayPayment(options) {
+function verifyPaymentSignature(paymentData) {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = options;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = paymentData;
     
-    // Get key secret from environment
-    const key_secret = process.env.RAZORPAY_KEY_SECRET;
+    // Create signature verification string
+    const signatureString = `${razorpay_order_id}|${razorpay_payment_id}`;
     
-    if (!key_secret) {
-      throw new Error('Razorpay API key secret not found in environment variables');
-    }
-    
-    // Import crypto
-    const crypto = require('crypto');
-    
-    // Create hmac object
-    const hmac = crypto.createHmac('sha256', key_secret);
-    
-    // Create the signature string
-    const signatureData = razorpay_order_id + '|' + razorpay_payment_id;
-    
-    // Update hmac with data
-    hmac.update(signatureData);
-    
-    // Get the generated signature
-    const generatedSignature = hmac.digest('hex');
+    // Generate HMAC SHA256 hash
+    const expectedSignature = crypto
+      .createHmac('sha256', RAZORPAY_KEY_SECRET)
+      .update(signatureString)
+      .digest('hex');
     
     // Compare signatures
-    const isValid = generatedSignature === razorpay_signature;
-    
-    console.log('Razorpay payment verification result:', isValid);
-    return isValid;
+    return expectedSignature === razorpay_signature;
   } catch (error) {
-    console.error('Error verifying Razorpay payment:', error);
-    throw error;
+    console.error('Error verifying Razorpay signature:', error);
+    return false;
   }
 }
 
 /**
- * Get Razorpay payment details
+ * Fetch payment details from Razorpay
  * @param {string} paymentId - Razorpay payment ID
  * @returns {Promise<Object>} - Payment details
  */
-async function getRazorpayPaymentDetails(paymentId) {
+async function fetchPaymentDetails(paymentId) {
   try {
-    const client = getRazorpayClient();
-    const payment = await client.payments.fetch(paymentId);
+    const response = await axios.get(
+      `${RAZORPAY_API_URL}/payments/${paymentId}`,
+      {
+        auth: {
+          username: RAZORPAY_KEY_ID,
+          password: RAZORPAY_KEY_SECRET
+        }
+      }
+    );
     
-    console.log('Razorpay payment details fetched:', payment);
-    return payment;
+    return response.data;
   } catch (error) {
-    console.error('Error fetching Razorpay payment details:', error);
-    throw error;
+    console.error('Error fetching Razorpay payment details:', error.response?.data || error.message);
+    throw new Error(`Failed to fetch payment details: ${error.message}`);
+  }
+}
+
+/**
+ * Process a refund for a payment
+ * @param {string} paymentId - Razorpay payment ID
+ * @param {number} amount - Amount to refund (in paise)
+ * @returns {Promise<Object>} - Refund details
+ */
+async function processRefund(paymentId, amount) {
+  try {
+    const response = await axios.post(
+      `${RAZORPAY_API_URL}/payments/${paymentId}/refund`,
+      { amount },
+      {
+        auth: {
+          username: RAZORPAY_KEY_ID,
+          password: RAZORPAY_KEY_SECRET
+        },
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error processing Razorpay refund:', error.response?.data || error.message);
+    throw new Error(`Failed to process refund: ${error.message}`);
   }
 }
 
 module.exports = {
   createRazorpayOrder,
-  verifyRazorpayPayment,
-  getRazorpayPaymentDetails
+  verifyPaymentSignature,
+  fetchPaymentDetails,
+  processRefund
 }; 

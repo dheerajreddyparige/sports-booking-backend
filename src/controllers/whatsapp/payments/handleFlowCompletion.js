@@ -6,7 +6,7 @@
 const { createPaymentOptionsMessage, createUpiPaymentMessage, createRazorpayPaymentMessage } = require('../../../utils/whatsappPaymentFlow');
 const { generateUpiLink } = require('../../../services/payments/upiService');
 const { createRazorpayOrder } = require('../../../services/payments/razorpayService');
-const { sendWhatsAppMessage } = require('../../../services/whatsapp/messageService');
+const whatsappService = require('../../../services/whatsapp');
 const bookingService = require('../../../services/bookingService');
 
 /**
@@ -44,7 +44,7 @@ async function handleFlowCompletion(req, res) {
     
     // Send payment options message
     const paymentOptionsMessage = createPaymentOptionsMessage(to, bookingData);
-    await sendWhatsAppMessage(paymentOptionsMessage);
+    await whatsappService.sendRawMessage(paymentOptionsMessage);
     
     res.status(200).json({ success: true, message: 'Flow completion processed' });
   } catch (error) {
@@ -54,7 +54,7 @@ async function handleFlowCompletion(req, res) {
 }
 
 /**
- * Process UPI payment request
+ * Process UPI payment
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
@@ -64,23 +64,19 @@ async function processUpiPayment(req, res) {
     
     // Get booking details
     const booking = await bookingService.getBookingById(booking_id);
+    
     if (!booking) {
-      return res.status(404).json({ success: false, message: 'Booking not found' });
+      return res.status(404).json({ success: false, error: 'Booking not found' });
     }
     
-    // Generate UPI link
-    const upiLink = await generateUpiLink({
-      amount: booking.total_amount,
-      bookingId: booking.booking_id,
-      customerName: booking.name
-    });
+    // Generate UPI payment link
+    const upiLink = generateUpiLink(booking);
     
-    // Update booking with UPI link
-    await bookingService.updateBooking(booking_id, { upi_link: upiLink });
+    // Create UPI payment message
+    const upiPaymentMessage = createUpiPaymentMessage(to, booking, upiLink);
     
     // Send UPI payment message
-    const upiPaymentMessage = createUpiPaymentMessage(to, booking, upiLink);
-    await sendWhatsAppMessage(upiPaymentMessage);
+    await whatsappService.sendRawMessage(upiPaymentMessage);
     
     res.status(200).json({ success: true, message: 'UPI payment initiated' });
   } catch (error) {
@@ -90,7 +86,7 @@ async function processUpiPayment(req, res) {
 }
 
 /**
- * Process Razorpay payment request
+ * Process Razorpay payment
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
@@ -100,31 +96,22 @@ async function processRazorpayPayment(req, res) {
     
     // Get booking details
     const booking = await bookingService.getBookingById(booking_id);
+    
     if (!booking) {
-      return res.status(404).json({ success: false, message: 'Booking not found' });
+      return res.status(404).json({ success: false, error: 'Booking not found' });
     }
     
     // Create Razorpay order
-    const orderData = await createRazorpayOrder({
-      amount: booking.total_amount,
-      currency: 'INR',
-      receipt: booking.booking_id,
-      notes: {
-        booking_id: booking.booking_id,
-        customer_name: booking.name,
-        customer_email: booking.email,
-        customer_phone: booking.phone
-      }
-    });
+    const order = await createRazorpayOrder(booking);
     
-    // Update booking with Razorpay order ID
-    await bookingService.updateBooking(booking_id, { 
-      razorpay_order_id: orderData.id
-    });
+    // Create Razorpay payment message
+    const razorpayPaymentMessage = createRazorpayPaymentMessage(to, booking, order.id);
     
     // Send Razorpay payment message
-    const razorpayPaymentMessage = createRazorpayPaymentMessage(to, booking, orderData.id);
-    await sendWhatsAppMessage(razorpayPaymentMessage);
+    await whatsappService.sendRawMessage(razorpayPaymentMessage);
+    
+    // Update booking with order ID
+    await bookingService.updateBooking(booking_id, { razorpay_order_id: order.id });
     
     res.status(200).json({ success: true, message: 'Razorpay payment initiated' });
   } catch (error) {
@@ -134,41 +121,158 @@ async function processRazorpayPayment(req, res) {
 }
 
 /**
- * Handle payment status update
+ * Handle payment webhook from payment gateway
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
-async function handlePaymentStatus(req, res) {
+async function handlePaymentWebhook(req, res) {
   try {
-    const { payment_id, merchant_order_id, status } = req.body;
+    const { event, payload } = req.body;
     
-    // Find booking by Razorpay order ID
-    const booking = await bookingService.getBookingByOrderId(merchant_order_id);
-    if (!booking) {
-      return res.status(404).json({ success: false, message: 'Booking not found' });
+    console.log('Received payment webhook:', event);
+    console.log('Webhook payload:', payload);
+    
+    // Verify webhook signature if available
+    // This should be implemented based on your payment gateway's requirements
+    
+    // Process different webhook events
+    switch (event) {
+      case 'payment.authorized':
+      case 'payment.captured':
+        await processSuccessfulPayment(payload);
+        break;
+      case 'payment.failed':
+        await processFailedPayment(payload);
+        break;
+      default:
+        console.log(`Unhandled webhook event: ${event}`);
     }
     
-    // Update booking status based on payment status
-    if (status === 'success') {
-      await bookingService.updateBooking(booking.booking_id, {
-        payment_status: 'completed',
-        status: 'confirmed',
-        payment_id: payment_id
-      });
-      
-      // Send confirmation message (you can implement this separately)
-      // await sendPaymentConfirmation(booking.phone, booking);
-    } else {
-      await bookingService.updateBooking(booking.booking_id, {
-        payment_status: status,
-        payment_id: payment_id
-      });
-    }
-    
-    res.status(200).json({ success: true, message: 'Payment status updated' });
+    // Always return 200 to acknowledge receipt
+    res.status(200).json({ success: true });
   } catch (error) {
-    console.error('Error handling payment status:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error handling payment webhook:', error);
+    
+    // Still return 200 to prevent retries
+    res.status(200).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * Process successful payment
+ * @param {Object} payload - Payment payload
+ */
+async function processSuccessfulPayment(payload) {
+  try {
+    // Extract booking ID from payload
+    const { order_id, reference_id, booking_id } = payload;
+    const bookingId = booking_id || reference_id;
+    
+    if (!bookingId) {
+      throw new Error('No booking ID found in payload');
+    }
+    
+    // Update booking status
+    await bookingService.confirmBooking(bookingId, {
+      payment_status: 'paid',
+      transaction_id: payload.payment_id || payload.transaction_id,
+      payment_method: payload.payment_method || 'online'
+    });
+    
+    // Get booking details
+    const booking = await bookingService.getBookingById(bookingId);
+    
+    if (!booking) {
+      throw new Error(`Booking not found: ${bookingId}`);
+    }
+    
+    // Send confirmation message to customer
+    const confirmationMessage = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: booking.phone,
+      type: "interactive",
+      interactive: {
+        type: "order_status",
+        body: {
+          text: `Your payment for ${booking.sport} booking on ${booking.date} at ${booking.start_time} has been confirmed. Thank you for your booking!`
+        },
+        action: {
+          name: "review_order",
+          parameters: {
+            reference_id: bookingId,
+            order: {
+              status: "completed",
+              description: "Payment received and booking confirmed"
+            }
+          }
+        }
+      }
+    };
+    
+    await whatsappService.sendRawMessage(confirmationMessage);
+  } catch (error) {
+    console.error('Error processing successful payment:', error);
+    throw error;
+  }
+}
+
+/**
+ * Process failed payment
+ * @param {Object} payload - Payment payload
+ */
+async function processFailedPayment(payload) {
+  try {
+    // Extract booking ID from payload
+    const { order_id, reference_id, booking_id } = payload;
+    const bookingId = booking_id || reference_id;
+    
+    if (!bookingId) {
+      throw new Error('No booking ID found in payload');
+    }
+    
+    // Update booking status
+    await bookingService.updateBooking(bookingId, {
+      payment_status: 'failed',
+      transaction_id: payload.payment_id || payload.transaction_id,
+      payment_method: payload.payment_method || 'online'
+    });
+    
+    // Get booking details
+    const booking = await bookingService.getBookingById(bookingId);
+    
+    if (!booking) {
+      throw new Error(`Booking not found: ${bookingId}`);
+    }
+    
+    // Send failure message to customer
+    const failureMessage = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: booking.phone,
+      type: "interactive",
+      interactive: {
+        type: "order_status",
+        body: {
+          text: `Your payment for ${booking.sport} booking on ${booking.date} at ${booking.start_time} has failed. Please try again or contact support.`
+        },
+        action: {
+          name: "review_order",
+          parameters: {
+            reference_id: bookingId,
+            order: {
+              status: "pending",
+              description: "Payment failed, please try again"
+            }
+          }
+        }
+      }
+    };
+    
+    await whatsappService.sendRawMessage(failureMessage);
+  } catch (error) {
+    console.error('Error processing failed payment:', error);
+    throw error;
   }
 }
 
@@ -176,5 +280,5 @@ module.exports = {
   handleFlowCompletion,
   processUpiPayment,
   processRazorpayPayment,
-  handlePaymentStatus
+  handlePaymentWebhook
 }; 
